@@ -1,0 +1,3 @@
+*.skill
+dist/
+__pycache__/
