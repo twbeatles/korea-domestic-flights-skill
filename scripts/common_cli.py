@@ -70,6 +70,18 @@ WEEKDAY_ALIASES = {
     "일요일": 6,
 }
 
+TIME_BUCKETS = {
+    "새벽": (0, 5),
+    "아침": (6, 10),
+    "오전": (6, 11),
+    "점심": (11, 13),
+    "오후": (12, 17),
+    "저녁": (18, 21),
+    "밤": (20, 23),
+    "야간": (20, 23),
+    "늦은": (18, 23),
+}
+
 
 def airport_label(code: str) -> str:
     code = (code or "").upper()
@@ -253,3 +265,192 @@ def unique_codes(values: Iterable[str]) -> list[str]:
             seen.add(value)
             output.append(value)
     return output
+
+
+def parse_time_to_minutes(value: str | None) -> int | None:
+    if not value:
+        return None
+    raw = str(value).strip()
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?", raw)
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    if 0 <= hour <= 23 and 0 <= minute <= 59:
+        return hour * 60 + minute
+    return None
+
+
+class TimePreference:
+    def __init__(
+        self,
+        depart_min: int | None = None,
+        depart_max: int | None = None,
+        return_min: int | None = None,
+        return_max: int | None = None,
+        exclude_before_depart: int | None = None,
+        prefer: str | None = None,
+        raw: str | None = None,
+    ):
+        self.depart_min = depart_min
+        self.depart_max = depart_max
+        self.return_min = return_min
+        self.return_max = return_max
+        self.exclude_before_depart = exclude_before_depart
+        self.prefer = prefer
+        self.raw = raw or ""
+
+    def active(self) -> bool:
+        return any(
+            value is not None for value in [self.depart_min, self.depart_max, self.return_min, self.return_max, self.exclude_before_depart]
+        ) or bool(self.prefer)
+
+    def describe(self) -> str | None:
+        parts: list[str] = []
+        if self.depart_min is not None:
+            parts.append(f"출발 {format_minutes(self.depart_min)} 이후")
+        if self.depart_max is not None:
+            parts.append(f"출발 {format_minutes(self.depart_max)} 이전")
+        if self.return_min is not None:
+            parts.append(f"복귀 {format_minutes(self.return_min)} 이후")
+        if self.return_max is not None:
+            parts.append(f"복귀 {format_minutes(self.return_max)} 이전")
+        if self.exclude_before_depart is not None:
+            parts.append(f"너무 이른 비행 제외({format_minutes(self.exclude_before_depart)} 이전 제외)")
+        if self.prefer:
+            prefer_map = {
+                "late": "늦은 시간대 선호",
+                "morning": "오전 선호",
+                "afternoon": "오후 선호",
+                "evening": "저녁 선호",
+            }
+            parts.append(prefer_map.get(self.prefer, self.prefer))
+        return " · ".join(parts) if parts else None
+
+
+def format_minutes(value: int | None) -> str:
+    if value is None:
+        return ""
+    hour = value // 60
+    minute = value % 60
+    return f"{hour:02d}:{minute:02d}"
+
+
+def parse_time_preference_text(text: str | None) -> TimePreference:
+    pref = TimePreference(raw=text or "")
+    if not text:
+        return pref
+    raw = str(text).strip().lower()
+    normalized = raw.replace("시 이후", "시이후").replace("시 이전", "시이전").replace("시 전", "시이전")
+
+    for key, (start_hour, end_hour) in TIME_BUCKETS.items():
+        if key in normalized:
+            if "복귀" in normalized or "귀환" in normalized or "오는편" in normalized:
+                pref.return_min = pref.return_min if pref.return_min is not None else start_hour * 60
+                pref.return_max = pref.return_max if pref.return_max is not None else end_hour * 60 + 59
+            else:
+                pref.depart_min = pref.depart_min if pref.depart_min is not None else start_hour * 60
+                pref.depart_max = pref.depart_max if pref.depart_max is not None else end_hour * 60 + 59
+
+    if "늦은 시간" in normalized or "늦게" in normalized:
+        pref.prefer = pref.prefer or "late"
+    elif "오전 선호" in normalized:
+        pref.prefer = pref.prefer or "morning"
+    elif "오후 선호" in normalized:
+        pref.prefer = pref.prefer or "afternoon"
+    elif "저녁 선호" in normalized:
+        pref.prefer = pref.prefer or "evening"
+
+    for pattern, target in [
+        (r"출발\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "depart_min"),
+        (r"출발\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "depart_max"),
+        (r"복귀\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
+        (r"귀환\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
+        (r"오는편\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
+        (r"복귀\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
+        (r"귀환\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
+        (r"오는편\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
+        (r"너무\s*이른\s*비행\s*제외.*?(\d{1,2})(?::(\d{2}))?\s*시", "exclude_before_depart"),
+        (r"(\d{1,2})(?::(\d{2}))?\s*시\s*이전\s*비행\s*제외", "exclude_before_depart"),
+    ]:
+        match = re.search(pattern, normalized)
+        if match:
+            minutes = int(match.group(1)) * 60 + int(match.group(2) or 0)
+            setattr(pref, target, minutes)
+
+    return pref
+
+
+def _within_range(value_minutes: int | None, min_minutes: int | None, max_minutes: int | None) -> bool:
+    if value_minutes is None:
+        return False
+    if min_minutes is not None and value_minutes < min_minutes:
+        return False
+    if max_minutes is not None and value_minutes > max_minutes:
+        return False
+    return True
+
+
+def _score_time_preference(item: dict, pref: TimePreference) -> int:
+    depart = parse_time_to_minutes(item.get("departure_time"))
+    ret = parse_time_to_minutes(item.get("return_departure_time"))
+    score = 0
+    if pref.prefer == "late":
+        score += depart or 0
+        score += (ret or 0) // 2
+    elif pref.prefer == "morning":
+        score -= abs((depart or 12 * 60) - 9 * 60)
+    elif pref.prefer == "afternoon":
+        score -= abs((depart or 12 * 60) - 15 * 60)
+    elif pref.prefer == "evening":
+        score -= abs((depart or 12 * 60) - 19 * 60)
+    return score
+
+
+def filter_and_rank_by_time_preference(items: Sequence[dict], pref: TimePreference) -> tuple[list[dict], list[dict]]:
+    if not pref.active():
+        return list(items), sorted(list(items), key=lambda x: x.get("price", 0) if x.get("price", 0) > 0 else 10**12)
+
+    filtered = []
+    for item in items:
+        depart = parse_time_to_minutes(item.get("departure_time"))
+        ret = parse_time_to_minutes(item.get("return_departure_time"))
+        if pref.exclude_before_depart is not None and (depart is None or depart < pref.exclude_before_depart):
+            continue
+        if (pref.depart_min is not None or pref.depart_max is not None) and not _within_range(depart, pref.depart_min, pref.depart_max):
+            continue
+        if item.get("is_round_trip") and (pref.return_min is not None or pref.return_max is not None) and not _within_range(ret, pref.return_min, pref.return_max):
+            continue
+        filtered.append(item)
+
+    ranked = sorted(
+        filtered,
+        key=lambda x: (
+            -_score_time_preference(x, pref),
+            x.get("price", 0) if x.get("price", 0) > 0 else 10**12,
+        ),
+    )
+    filtered.sort(key=lambda x: x.get("price", 0) if x.get("price", 0) > 0 else 10**12)
+    return filtered, ranked
+
+
+def choose_preferred_option(items: Sequence[dict], pref: TimePreference) -> dict | None:
+    _, ranked = filter_and_rank_by_time_preference(items, pref)
+    return ranked[0] if ranked else None
+
+
+def time_preference_recommendation(preferred: dict | None, cheapest: dict | None, pref: TimePreference) -> str | None:
+    if not pref.active() or not preferred:
+        return None
+    subject = preferred.get("airline", "옵션")
+    depart = preferred.get("departure_time") or "시간미상"
+    price = preferred.get("price", 0)
+    if cheapest and cheapest is not preferred and cheapest.get("price", 0) > 0 and price > 0:
+        gap = price - cheapest.get("price", 0)
+        gap_text = f"최저가 대비 {gap:,}원 추가" if gap > 0 else "최저가와 동일 가격"
+    else:
+        gap_text = "최저가와 같은 옵션"
+    detail = pref.describe() or "시간 선호"
+    if preferred.get("is_round_trip") and preferred.get("return_departure_time"):
+        return f"시간대 추천: {detail} 기준으로는 {subject} 가는편 {depart}, 오는편 {preferred.get('return_departure_time')} 옵션이 적합합니다 ({gap_text})."
+    return f"시간대 추천: {detail} 기준으로는 {subject} {depart} 출발 옵션이 적합합니다 ({gap_text})."

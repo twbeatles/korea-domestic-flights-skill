@@ -12,11 +12,15 @@ if str(SCRIPT_DIR) not in sys.path:
 from common_cli import (
     airport_label,
     cabin_label,
+    choose_preferred_option,
+    filter_and_rank_by_time_preference,
     format_price,
     normalize_airport,
     parse_flexible_date,
+    parse_time_preference_text,
     pretty_date,
     recommendation_line,
+    time_preference_recommendation,
 )
 
 
@@ -58,7 +62,7 @@ def option_text(item):
     return f"{item.get('airline','')} · {format_price(item.get('price', 0))} · {item.get('departure_time','')}→{item.get('arrival_time','')}"
 
 
-def build_summary(query, normalized):
+def build_summary(query, normalized, preferred, time_pref):
     route = f"{airport_label(query['origin'])} → {airport_label(query['destination'])}"
     trip_type = "왕복" if query.get("return_date") else "편도"
 
@@ -70,6 +74,8 @@ def build_summary(query, normalized):
             "cheapest_text": None,
             "top_options": [],
             "recommendation": None,
+            "time_preference_recommendation": None,
+            "preferred_option": preferred,
         }
 
     cheapest = normalized[0]
@@ -81,21 +87,27 @@ def build_summary(query, normalized):
         "cheapest_text": option_text(cheapest),
         "top_options": [option_text(item) for item in normalized[:3]],
         "recommendation": recommendation_line(option_text(cheapest), cheapest.get("price", 0), second_price),
+        "time_preference_recommendation": time_preference_recommendation(preferred, cheapest, time_pref),
+        "preferred_option": preferred,
     }
 
 
-def format_human(summary, query, count):
+def format_human(summary, query, count, time_pref):
     lines = [summary["headline"]]
     lines.append(f"조건: 성인 {query['adults']}명 · {cabin_label(query['cabin'])} · 결과 {count}건")
     if query.get("return_date"):
         lines.append(f"일정: {query['departure']} ~ {query['return_date']}")
     else:
         lines.append(f"일정: {query['departure']}")
+    if time_pref.describe():
+        lines.append(f"시간 조건: {time_pref.describe()}")
 
     if summary.get("cheapest_text"):
         lines.append(f"최저가: {summary['cheapest_text']}")
     if summary.get("recommendation"):
         lines.append(summary["recommendation"])
+    if summary.get("time_preference_recommendation"):
+        lines.append(summary["time_preference_recommendation"])
 
     if summary.get("top_options"):
         lines.append("상위 옵션:")
@@ -114,6 +126,11 @@ def main():
     parser.add_argument("--adults", type=int, default=1)
     parser.add_argument("--cabin", default="ECONOMY", choices=["ECONOMY", "BUSINESS", "FIRST"])
     parser.add_argument("--max-results", type=int, default=20)
+    parser.add_argument("--time-pref", help="예: 오전, 저녁, 출발 10시 이후, 복귀 18시 이후, 너무 이른 비행 제외 8시")
+    parser.add_argument("--depart-after", help="출발 N시 이후. 예: 10, 10:30")
+    parser.add_argument("--return-after", help="복귀 N시 이후. 예: 18, 18:30")
+    parser.add_argument("--exclude-early-before", help="이 시간 이전 출발 제외. 예: 8, 08:30")
+    parser.add_argument("--prefer", choices=["late", "morning", "afternoon", "evening"], help="시간대 선호 추천")
     parser.add_argument("--human", action="store_true")
     args = parser.parse_args()
 
@@ -141,6 +158,16 @@ def main():
         print(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False, indent=2))
         sys.exit(1)
 
+    time_pref = parse_time_preference_text(args.time_pref)
+    if args.depart_after:
+        time_pref.depart_min = parse_time_preference_text(f"출발 {args.depart_after}시 이후").depart_min
+    if args.return_after:
+        time_pref.return_min = parse_time_preference_text(f"복귀 {args.return_after}시 이후").return_min
+    if args.exclude_early_before:
+        time_pref.exclude_before_depart = parse_time_preference_text(f"{args.exclude_early_before}시 이전 비행 제외").exclude_before_depart
+    if args.prefer:
+        time_pref.prefer = args.prefer
+
     logs = []
 
     def progress(msg):
@@ -154,6 +181,7 @@ def main():
         "adults": args.adults,
         "cabin": args.cabin,
         "max_results": args.max_results,
+        "time_preference": time_pref.describe(),
     }
 
     searcher = FlightSearcher()
@@ -170,13 +198,14 @@ def main():
             background_mode=False,
         )
 
-        normalized = [normalize_result(item) for item in results]
-        normalized.sort(key=lambda x: x.get("price", 0) if x.get("price", 0) > 0 else 10**12)
+        all_results = [normalize_result(item) for item in results]
+        normalized, preferred_ranked = filter_and_rank_by_time_preference(all_results, time_pref)
+        preferred = preferred_ranked[0] if preferred_ranked else None
         cheapest = normalized[0] if normalized else None
-        summary = build_summary(query, normalized)
+        summary = build_summary(query, normalized, preferred, time_pref)
 
         if args.human:
-            print(format_human(summary, query, len(normalized)))
+            print(format_human(summary, query, len(normalized), time_pref))
             return
 
         print(json.dumps({
@@ -185,7 +214,9 @@ def main():
             "count": len(normalized),
             "summary": summary,
             "cheapest": cheapest,
+            "preferred_option": preferred,
             "results": normalized,
+            "all_results_before_time_filter": all_results,
             "logs": logs,
         }, ensure_ascii=False, indent=2))
     finally:

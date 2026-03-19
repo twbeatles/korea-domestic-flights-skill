@@ -16,6 +16,21 @@ def run_script(script_name: str, extra_args: list[str]) -> int:
     return subprocess.call(command)
 
 
+def time_args(args) -> list[str]:
+    output = []
+    if args.time_pref:
+        output.extend(["--time-pref", args.time_pref])
+    if args.depart_after:
+        output.extend(["--depart-after", args.depart_after])
+    if args.return_after:
+        output.extend(["--return-after", args.return_after])
+    if args.exclude_early_before:
+        output.extend(["--exclude-early-before", args.exclude_early_before])
+    if args.prefer:
+        output.extend(["--prefer", args.prefer])
+    return output
+
+
 def main():
     parser = argparse.ArgumentParser(description="Chat-friendly wrapper for Korea domestic flight search")
     parser.add_argument("--origin", required=True, help="예: 김포")
@@ -27,10 +42,16 @@ def main():
     parser.add_argument("--return-offset", type=int, default=0)
     parser.add_argument("--adults", type=int, default=1)
     parser.add_argument("--cabin", default="ECONOMY", choices=["ECONOMY", "BUSINESS", "FIRST"])
+    parser.add_argument("--time-pref", help="예: 오전, 저녁, 출발 10시 이후, 복귀 18시 이후, 너무 이른 비행 제외 8시, 늦은 시간 선호")
+    parser.add_argument("--depart-after")
+    parser.add_argument("--return-after")
+    parser.add_argument("--exclude-early-before")
+    parser.add_argument("--prefer", choices=["late", "morning", "afternoon", "evening"])
     parser.add_argument("--json", action="store_true", help="JSON 출력")
     args = parser.parse_args()
 
     human = [] if args.json else ["--human"]
+    extra_time_args = time_args(args)
 
     has_multi_dest = bool(args.destinations and "," in args.destinations or (args.destinations and args.destination))
     destinations_value = args.destinations or args.destination
@@ -51,6 +72,7 @@ def main():
                     "--return-offset", str(args.return_offset),
                     "--adults", str(args.adults),
                     "--cabin", args.cabin,
+                    *extra_time_args,
                     *human,
                 ],
             )
@@ -61,9 +83,10 @@ def main():
                     "--origin", args.origin,
                     "--destinations", destinations_value,
                     "--departure", start_dt.strftime("%Y-%m-%d"),
-                    *( ["--return-date", args.return_date] if args.return_date else [] ),
+                    *(["--return-date", args.return_date] if args.return_date else []),
                     "--adults", str(args.adults),
                     "--cabin", args.cabin,
+                    *extra_time_args,
                     *human,
                 ],
             )
@@ -78,6 +101,7 @@ def main():
                     "--return-offset", str(args.return_offset),
                     "--adults", str(args.adults),
                     "--cabin", args.cabin,
+                    *extra_time_args,
                     *human,
                 ],
             )
@@ -87,15 +111,15 @@ def main():
                 "--origin", args.origin,
                 "--destination", destinations_value,
                 "--departure", start_dt.strftime("%Y-%m-%d"),
-                *( ["--return-date", args.return_date] if args.return_date else [] ),
+                *(["--return-date", args.return_date] if args.return_date else []),
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
+                *extra_time_args,
                 *human,
             ],
         )
 
     if has_multi_dest and args.departure and args.return_offset >= 0 and not args.return_date:
-        # departure만 있고 여러 목적지면 목적지 비교 기본 동작
         return run_script(
             "search_multi_destination.py",
             [
@@ -104,6 +128,7 @@ def main():
                 "--departure", args.departure,
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
+                *extra_time_args,
                 *human,
             ],
         )
@@ -118,6 +143,7 @@ def main():
                 "--return-date", args.return_date,
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
+                *extra_time_args,
                 *human,
             ],
         )
@@ -129,9 +155,10 @@ def main():
                 "--origin", args.origin,
                 "--destination", destinations_value,
                 "--departure", args.departure,
-                *( ["--return-date", args.return_date] if args.return_date else [] ),
+                *(["--return-date", args.return_date] if args.return_date else []),
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
+                *extra_time_args,
                 *human,
             ],
         )
