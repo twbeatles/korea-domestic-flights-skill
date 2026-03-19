@@ -1,6 +1,6 @@
 ---
 name: korea-domestic-flights
-description: Search 대한민국 domestic flights using a Playwright-backed local scraper. Use when the user asks for 한국 국내선 항공권 검색, 김포-제주/부산-제주 같은 국내 노선 최저가 확인, 편도/왕복 조회, 날짜별 최저가 비교, 여러 국내 목적지 비교, 국내선 운임 요약, 목적지+날짜 범위 최적 조합 탐색, or route/date fare checks. Accept common Korean airport names like 김포, 제주, 부산, 청주 as inputs, and simple natural-language dates like 오늘/내일/모레/이번주말/내일부터 3일. Prefer this skill for Korean domestic airfare tasks; do not use it for international flights.
+description: Search 대한민국 domestic flights using a Playwright-backed local scraper, and manage domestic airfare price-watch rules. Use when the user asks for 한국 국내선 항공권 검색, 김포-제주/부산-제주 같은 국내 노선 최저가 확인, 편도/왕복 조회, 날짜별 최저가 비교, 여러 국내 목적지 비교, 국내선 운임 요약, 목적지+날짜 범위 최적 조합 탐색, route/date fare checks, or 국내선 가격 알림/가격 감시/목표가 이하 알림 저장·점검. Accept common Korean airport names like 김포, 제주, 부산, 청주 as inputs, and simple natural-language dates like 오늘/내일/모레/이번주말/내일부터 3일. Prefer this skill for Korean domestic airfare tasks; do not use it for international flights.
 ---
 
 # Korea Domestic Flights
@@ -18,6 +18,12 @@ Current scope:
 - 한글 공항명 입력 지원
 - `오늘/내일/모레/이번주말/내일부터 3일` 같은 간단한 자연어 날짜 지원
 - 채팅 친화 래퍼 제공
+- 목표가 기반 가격 감시 규칙 저장/목록/삭제/점검
+- 가격 알림 중복 방지(dedupe)
+- 단일/다중 목적지 가격 감시
+- 알림 메시지 포맷 커스터마이즈
+- cron/브리핑 연동을 염두에 둔 JSON 저장 포맷
+- Windows 작업 스케줄러 등록 초안 스크립트
 
 Do not use it for 국제선.
 
@@ -113,6 +119,58 @@ python skills/korea-domestic-flights/scripts/chat_search.py --origin 김포 --de
 
 Add `--json` when structured output is needed; otherwise it defaults to a human-readable Korean briefing.
 
+### 6) Price alert / watch rules
+
+Store a single-date alert:
+
+```bash
+python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destination 제주 --departure 내일 --target-price 70000 --label "김포-제주 내일 특가"
+```
+
+Store a date-range alert:
+
+```bash
+python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "내일부터 3일" --target-price 80000 --label "김포-제주 3일 범위 감시"
+```
+
+Store a multi-destination watch:
+
+```bash
+python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destinations 제주,부산,여수 --departure 내일 --target-price 90000 --label "김포 출발 내일 다중 목적지 감시"
+```
+
+Store a round-trip range alert with fixed return offset:
+
+```bash
+python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --target-price 150000 --label "주말 왕복 특가"
+```
+
+Store a custom message format:
+
+```bash
+python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destinations 제주,부산 --date-range "내일부터 3일" --target-price 85000 --message-template "[특가감시] {best_destination_label} {departure_date} {observed_price} / 기준 {target_price}"
+```
+
+Check all active rules:
+
+```bash
+python skills/korea-domestic-flights/scripts/price_alerts.py check
+```
+
+List saved rules:
+
+```bash
+python skills/korea-domestic-flights/scripts/price_alerts.py list
+```
+
+Remove a rule:
+
+```bash
+python skills/korea-domestic-flights/scripts/price_alerts.py remove --rule-id kdf-1234abcd
+```
+
+When a rule matches, `check` prints a human-readable Korean alert message to stdout so an upper-layer cron/briefing flow can forward it directly.
+
 ## Parameters
 
 `search_domestic.py`
@@ -165,10 +223,33 @@ Add `--json` when structured output is needed; otherwise it defaults to a human-
 - `--return-offset`: 날짜범위 왕복 오프셋
 - `--json`: JSON 출력, 생략 시 사람이 읽기 쉬운 브리핑 출력
 
-## Airport codes
+`price_alerts.py`
+- `add`: 감시 규칙 저장
+  - `--origin`: 출발 공항
+  - `--destination` 또는 `--destinations`: 단일/다중 목적지
+  - `--departure`: 단일 날짜 감시
+  - `--return-date`: 왕복 귀국일
+  - `--date-range`: 날짜 범위 감시
+  - `--return-offset`: 날짜 범위 왕복 감시 시 귀국 오프셋
+  - `--adults`: 성인 수
+  - `--cabin`: `ECONOMY|BUSINESS|FIRST`
+  - `--target-price`: 목표가(원)
+  - `--label`: 사람이 읽을 이름
+  - `--message-template`: 커스텀 알림 포맷
+  - `--store`: 저장 파일 경로 오버라이드
+  - 동일 조건+목표가 규칙은 fingerprint 기준으로 중복 저장되지 않음
+- `list`: 저장된 규칙 목록 출력
+- `check`: 활성 규칙 점검, 목표가 충족 시 한국어 알림 출력
+  - 동일한 결과는 `notify.dedupe_key` 기준으로 재알림 억제
+  - `--no-dedupe` 로 강제 재출력 가능
+- `render`: 마지막 `last_result` 를 현재 템플릿으로 미리보기
+- `remove`: 규칙 삭제
 
-For common Korean airport codes and names, read:
-- `references/domestic-airports.md`
+## References
+
+Read these only when needed:
+- `references/domestic-airports.md`: 국내 공항 코드/이름 매핑
+- `references/price-alerts-schema.md`: 가격 감시 JSON 저장 포맷, dedupe, 다중 목적지 감시, 메시지 템플릿, cron/스케줄러 연결 힌트
 
 ## Operational notes
 
