@@ -242,6 +242,25 @@ def format_price(value: int | float | None) -> str:
     return f"{int(value or 0):,}원"
 
 
+def format_time_or_fallback(value: str | None, fallback: str = "시간 정보 없음") -> str:
+    text = str(value or "").strip()
+    return text or fallback
+
+
+def join_nonempty(parts: Sequence[str | None], sep: str = " · ") -> str:
+    return sep.join([str(part) for part in parts if part])
+
+
+def add_section(lines: list[str], title: str, body: Sequence[str | None]) -> None:
+    items = [str(item) for item in body if item]
+    if not items:
+        return
+    if lines:
+        lines.append("")
+    lines.append(f"[{title}]")
+    lines.extend(items)
+
+
 def summarize_price_gap(best_price: int, next_price: int | None) -> str | None:
     if not best_price or not next_price or next_price <= best_price:
         return None
@@ -633,8 +652,8 @@ def round_trip_balance_recommendation(balanced: dict | None, cheapest: dict | No
     if not balanced:
         return None
     label = balanced.get("airline") or "옵션"
-    depart = balanced.get("departure_time") or "시간미상"
-    ret = balanced.get("return_departure_time") or "시간미상"
+    depart = format_time_or_fallback(balanced.get("departure_time"))
+    ret = format_time_or_fallback(balanced.get("return_departure_time"))
     if cheapest and cheapest.get("price", 0) and balanced.get("price", 0):
         gap = int(balanced.get("price", 0)) - int(cheapest.get("price", 0))
         gap_text = "최저가와 동일 가격" if gap == 0 else (f"최저가 대비 {gap:,}원 추가" if gap > 0 else f"최저가보다 {-gap:,}원 저렴")
@@ -657,7 +676,7 @@ def build_best_option_reasons(best: dict | None, next_price: int | None = None, 
         else:
             reasons.append(f"항공사 {airline}")
     if best.get("return_departure_time") or best.get("return_arrival_time"):
-        ret_depart = best.get("return_departure_time") or "시간미상"
+        ret_depart = format_time_or_fallback(best.get("return_departure_time"))
         ret_arrive = best.get("return_arrival_time")
         if ret_arrive:
             reasons.append(f"오는편 {ret_depart}→{ret_arrive}")
@@ -675,8 +694,8 @@ def build_balanced_option_reasons(balanced: dict | None, cheapest: dict | None =
     if not balanced:
         return []
     reasons: list[str] = []
-    depart = balanced.get("departure_time") or "시간미상"
-    ret = balanced.get("return_departure_time") or "시간미상"
+    depart = format_time_or_fallback(balanced.get("departure_time"))
+    ret = format_time_or_fallback(balanced.get("return_departure_time"))
     reasons.append(f"왕복 시간대 {depart} / {ret} 조합")
     if pref and pref.describe():
         reasons.append(f"시간 선호 '{pref.describe()}'에 더 잘 맞음")
@@ -695,7 +714,7 @@ def time_preference_recommendation(preferred: dict | None, cheapest: dict | None
     if not pref.active() or not preferred:
         return None
     subject = preferred.get("airline", "옵션")
-    depart = preferred.get("departure_time") or "시간미상"
+    depart = format_time_or_fallback(preferred.get("departure_time"))
     price = preferred.get("price", 0)
     if cheapest and cheapest is not preferred and cheapest.get("price", 0) > 0 and price > 0:
         gap = price - cheapest.get("price", 0)
@@ -704,5 +723,5 @@ def time_preference_recommendation(preferred: dict | None, cheapest: dict | None
         gap_text = "최저가와 같은 옵션"
     detail = pref.describe() or "시간 선호"
     if preferred.get("is_round_trip") and preferred.get("return_departure_time"):
-        return f"시간대 추천: {detail} 기준으로는 {subject} 가는편 {depart}, 오는편 {preferred.get('return_departure_time')} 옵션이 적합합니다 ({gap_text})."
+        return f"시간대 추천: {detail} 기준으로는 {subject} 가는편 {depart}, 오는편 {format_time_or_fallback(preferred.get('return_departure_time'))} 옵션이 적합합니다 ({gap_text})."
     return f"시간대 추천: {detail} 기준으로는 {subject} {depart} 출발 옵션이 적합합니다 ({gap_text})."

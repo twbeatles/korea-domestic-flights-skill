@@ -134,6 +134,26 @@ python skills/korea-domestic-flights/scripts/chat_search.py --origin 김포 --de
 
 Add `--json` when structured output is needed; otherwise it defaults to a human-readable Korean briefing.
 
+### 0) Hybrid diagnostics smoke/live checks
+
+Fixture-based regression/smoke check:
+
+```bash
+python skills/korea-domestic-flights/scripts/hybrid_smoke_check.py
+```
+
+Shallow environment-only check:
+
+```bash
+python skills/korea-domestic-flights/scripts/hybrid_live_dry_run.py
+```
+
+Optional shallow live probe (non-brittle, no fare assertion):
+
+```bash
+python skills/korea-domestic-flights/scripts/hybrid_live_dry_run.py --probe
+```
+
 ### 6) Price alert / watch rules
 
 Store a single-date alert:
@@ -205,7 +225,7 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
 - `--time-pref`: 자연어 시간 조건 (`오전`, `오후`, `저녁`, `출발 10시 이후`, `복귀 18시 이후`, `너무 이른 비행 제외 8시`, `늦은 시간 선호` 등)
 - `--depart-after`, `--return-after`, `--exclude-early-before`: 옵션 기반 시간 필터
 - `--prefer`: `late|morning|afternoon|evening` 시간 선호 추천
-- `--human`: 자연스러운 한국어 브리핑 출력
+- `--human`: 자연스러운 한국어 브리핑 출력 (`최저가` / `시간대 추천` / `왕복 균형 추천` 중심 구획형 요약)
 
 `search_date_range.py`
 - `--origin`: 출발 공항 코드 또는 한글 공항명
@@ -217,8 +237,10 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
 - `--adults`: 성인 수
 - `--cabin`: `ECONOMY|BUSINESS|FIRST`
 - `--time-pref`, `--depart-after`, `--return-after`, `--exclude-early-before`, `--prefer`: 시간 필터/시간 선호 추천
-- 시간 조건이 있으면 전체 날짜를 병렬로 빠르게 훑은 뒤 상위 날짜와 인접 날짜까지 포함해 상세 재검증하는 하이브리드 모드로 전환됨
-- `summary.search_metadata` / 최상위 `search_metadata` / `logs` 에 하이브리드 여부, 전체 스캔 수, 상세 재검증 수가 기록됨
+- 시간 조건이 있으면 전체 날짜를 병렬로 빠르게 훑은 뒤 저가 후보·인접 날짜·범위 커버리지 앵커를 함께 상세 재검증하는 하이브리드 모드로 전환됨
+- 상세 재검증 후 시간 조건 일치 결과가 너무 적거나, 시간조건 탈락/빈결과 유사 패턴이 강하면 fallback 후보 확장을 한 번 더 수행할 수 있음
+- `summary.search_metadata` / 최상위 `search_metadata` / `logs` 에 하이브리드 여부, 전체 스캔 수, 초기/추가 재검증 수, fallback 여부, 시간 조건 요약과 `refine_diagnostics`(시간조건 탈락 / usable match 없음 / 빠른스캔-상세 불일치 빈결과 / 출발·복귀 시간정보 부족 / 가격정보 부족 분류, 샘플, user/developer 힌트, `ranked_reasons`, `dominant_reason_code`, `primary_interpretation`)가 기록됨
+- fallback 판단 요약은 `fallback_decision` / `fallback_reason_codes` 에 구조화되어 남음
 - 결과 요약에는 날짜별 가격 캘린더/히트맵(`summary.price_calendar`)이 포함됨
 - `--human`: 자연스러운 한국어 브리핑 출력
 
@@ -241,8 +263,10 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
 - `--adults`: 성인 수
 - `--cabin`: `ECONOMY|BUSINESS|FIRST`
 - `--time-pref`, `--depart-after`, `--return-after`, `--exclude-early-before`, `--prefer`: 시간 필터/시간 선호 추천
-- 시간 조건이 있으면 전체 조합을 목적지별 병렬 스캔으로 먼저 좁힌 뒤 상위 조합과 인접 날짜 조합까지 포함해 상세 재검증하는 하이브리드 모드로 전환됨
-- `summary.search_metadata` / 최상위 `search_metadata` / `logs` 에 하이브리드 여부, 전체 스캔 수, 상세 재검증 수가 기록됨
+- 시간 조건이 있으면 전체 조합을 목적지별 병렬 스캔으로 먼저 좁힌 뒤 저가 조합·목적지별 후보·인접 날짜 조합·커버리지 앵커를 함께 상세 재검증하는 하이브리드 모드로 전환됨
+- 상세 재검증 후 시간 조건 일치 조합이 너무 적거나, 시간조건 탈락/빈결과 유사 패턴이 강하면 fallback 후보 확장을 한 번 더 수행할 수 있음
+- `summary.search_metadata` / 최상위 `search_metadata` / `logs` 에 하이브리드 여부, 전체 스캔 수, 초기/추가 재검증 수, fallback 여부, 시간 조건 요약과 `refine_diagnostics`(시간조건 탈락 / usable match 없음 / scraper-empty 유사 분류 / 시간·가격 정보 완전누락·부분누락, 샘플, `human_hint`/`developer_hint`, `extraction_summary`, `ranked_reasons`, `dominant_reason_code`, `primary_interpretation`)가 기록됨
+- fallback 판단 요약은 `fallback_decision` / `fallback_reason_codes` 에 구조화되어 남음
 - `--human`: 전체 최적 조합 + 목적지별 베스트 브리핑 출력
 
 `chat_search.py`

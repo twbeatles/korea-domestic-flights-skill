@@ -10,6 +10,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from common_cli import (
+    add_section,
     airport_label,
     build_best_option_reasons,
     cabin_label,
@@ -17,6 +18,8 @@ from common_cli import (
     explain_recommendation,
     filter_and_rank_by_time_preference,
     format_price,
+    format_time_or_fallback,
+    join_nonempty,
     normalize_airport,
     parse_flexible_date,
     parse_time_preference_args,
@@ -143,24 +146,34 @@ def main():
     }
 
     if args.human:
+        def destination_detail(item):
+            return join_nonempty([
+                item.get('airline') or None,
+                join_nonempty([
+                    format_time_or_fallback(item.get('departure_time')) if item.get('departure_time') else None,
+                    item.get('arrival_time') or None,
+                ], '→'),
+            ])
+
         lines = [summary["headline"]]
         lines.append(f"조건: 출발 {airport_label(origin)} · 출발일 {departure} · 성인 {args.adults}명 · {cabin_label(args.cabin)}")
         if return_date:
             lines.append(f"왕복 일정: {departure} ~ {return_date}")
         if time_pref.describe():
             lines.append(f"시간 조건: {time_pref.describe()}")
-        if best:
-            lines.append(f"최적 목적지: {best['destination_label']} · {format_price(best['cheapest_price'])} · {best['airline']} · {best['departure_time']}→{best['arrival_time']}")
-        if summary.get("recommendation"):
-            lines.append(summary["recommendation"])
-        if summary.get("recommendation_explained"):
-            lines.append(summary["recommendation_explained"])
+
+        add_section(lines, "최저가", [
+            join_nonempty([
+                f"최적 목적지: {best['destination_label']}" if best else None,
+                format_price(best['cheapest_price']) if best else None,
+                destination_detail(best) if best else None,
+            ]),
+            summary.get("recommendation"),
+            summary.get("recommendation_explained"),
+        ])
         late_pref = next((item["time_recommendation"] for item in ranked if item.get("time_recommendation")), None)
-        if late_pref:
-            lines.append(late_pref)
-        if ranked:
-            lines.append("목적지 비교:")
-            lines.extend(bullet_rank_lines(ranked, "destination_label", "cheapest_price", lambda item: f"{item['airline']} · {item['departure_time']}→{item['arrival_time']}", limit=5))
+        add_section(lines, "시간대 추천", [late_pref])
+        add_section(lines, "목적지 비교", bullet_rank_lines(ranked, "destination_label", "cheapest_price", destination_detail, limit=5))
         print("\n".join(lines))
         return
 

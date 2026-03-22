@@ -10,12 +10,15 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from common_cli import (
+    add_section,
     airport_label,
     build_best_option_reasons,
     cabin_label,
     explain_recommendation,
     filter_and_rank_by_time_preference,
     format_price,
+    format_time_or_fallback,
+    join_nonempty,
     normalize_airport,
     parse_flexible_date,
     parse_time_preference_args,
@@ -53,14 +56,19 @@ def normalize_result(item):
 
 
 def option_text(item):
+    airline = item.get('airline', '')
     if item.get("is_round_trip"):
-        return (
-            f"{item.get('airline','')}/{item.get('return_airline') or item.get('airline','')}"
-            f" · 총 {format_price(item.get('price', 0))}"
-            f" · 가는편 {item.get('departure_time','')}→{item.get('arrival_time','')}"
-            f" · 오는편 {item.get('return_departure_time','')}→{item.get('return_arrival_time','')}"
-        )
-    return f"{item.get('airline','')} · {format_price(item.get('price', 0))} · {item.get('departure_time','')}→{item.get('arrival_time','')}"
+        return join_nonempty([
+            f"{airline}/{item.get('return_airline') or airline}" if airline else None,
+            f"총 {format_price(item.get('price', 0))}",
+            f"가는편 {join_nonempty([format_time_or_fallback(item.get('departure_time')), item.get('arrival_time')], '→')}",
+            f"오는편 {join_nonempty([format_time_or_fallback(item.get('return_departure_time')), item.get('return_arrival_time')], '→')}",
+        ])
+    return join_nonempty([
+        airline or None,
+        format_price(item.get('price', 0)),
+        join_nonempty([format_time_or_fallback(item.get('departure_time')), item.get('arrival_time')], '→'),
+    ])
 
 
 def build_summary(query, normalized, preferred, time_pref):
@@ -101,27 +109,18 @@ def build_summary(query, normalized, preferred, time_pref):
 
 def format_human(summary, query, count, time_pref):
     lines = [summary["headline"]]
-    lines.append(f"조건: 성인 {query['adults']}명 · {cabin_label(query['cabin'])} · 결과 {count}건")
+    meta = [f"조건: 성인 {query['adults']}명 · {cabin_label(query['cabin'])} · 결과 {count}건"]
     if query.get("return_date"):
-        lines.append(f"일정: {query['departure']} ~ {query['return_date']}")
+        meta.append(f"일정: {query['departure']} ~ {query['return_date']}")
     else:
-        lines.append(f"일정: {query['departure']}")
+        meta.append(f"일정: {query['departure']}")
     if time_pref.describe():
-        lines.append(f"시간 조건: {time_pref.describe()}")
+        meta.append(f"시간 조건: {time_pref.describe()}")
+    lines.extend(meta)
 
-    if summary.get("cheapest_text"):
-        lines.append(f"최저가: {summary['cheapest_text']}")
-    if summary.get("recommendation"):
-        lines.append(summary["recommendation"])
-    if summary.get("recommendation_explained"):
-        lines.append(summary["recommendation_explained"])
-    if summary.get("time_preference_recommendation"):
-        lines.append(summary["time_preference_recommendation"])
-
-    if summary.get("top_options"):
-        lines.append("상위 옵션:")
-        for idx, item in enumerate(summary["top_options"], start=1):
-            lines.append(f"{idx}. {item}")
+    add_section(lines, "최저가", [summary.get("cheapest_text"), summary.get("recommendation"), summary.get("recommendation_explained")])
+    add_section(lines, "시간대 추천", [summary.get("time_preference_recommendation")])
+    add_section(lines, "상위 옵션", [f"{idx}. {item}" for idx, item in enumerate(summary.get("top_options", []), start=1)])
 
     return "\n".join(lines)
 
