@@ -13,13 +13,12 @@ from common_cli import (
     airport_label,
     build_best_option_reasons,
     cabin_label,
-    choose_preferred_option,
     explain_recommendation,
     filter_and_rank_by_time_preference,
     format_price,
     normalize_airport,
     parse_flexible_date,
-    parse_time_preference_text,
+    parse_time_preference_args,
     pretty_date,
     recommendation_line,
     time_preference_recommendation,
@@ -168,15 +167,7 @@ def main():
         print(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False, indent=2))
         sys.exit(1)
 
-    time_pref = parse_time_preference_text(args.time_pref)
-    if args.depart_after:
-        time_pref.depart_min = parse_time_preference_text(f"출발 {args.depart_after}시 이후").depart_min
-    if args.return_after:
-        time_pref.return_min = parse_time_preference_text(f"복귀 {args.return_after}시 이후").return_min
-    if args.exclude_early_before:
-        time_pref.exclude_before_depart = parse_time_preference_text(f"{args.exclude_early_before}시 이전 비행 제외").exclude_before_depart
-    if args.prefer:
-        time_pref.prefer = args.prefer
+    time_pref = parse_time_preference_args(args)
 
     logs = []
 

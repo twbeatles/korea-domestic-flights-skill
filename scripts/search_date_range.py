@@ -24,7 +24,7 @@ from common_cli import (
     normalize_airport,
     parse_date_range_text,
     parse_flexible_date,
-    parse_time_preference_text,
+    parse_time_preference_args,
     pretty_date,
     recommendation_line,
     round_trip_balance_recommendation,
@@ -67,9 +67,20 @@ def _choose_refine_dates(dates, broad_rows):
     if not available:
         return []
     available.sort(key=lambda x: x["price"])
-    refine_count = min(len(available), max(5, min(10, math.ceil(len(dates) * 0.5))))
-    chosen_keys = {row["departure_date"] for row in available[:refine_count]}
-    return [d for d in dates if pretty_date(d) in chosen_keys]
+    index_by_date = {pretty_date(d): idx for idx, d in enumerate(dates)}
+    refine_count = min(len(available), max(7, min(14, math.ceil(len(dates) * 0.7))))
+    chosen_indexes = set()
+    for row in available[:refine_count]:
+        idx = index_by_date.get(row["departure_date"])
+        if idx is None:
+            continue
+        for neighbor in (idx - 1, idx, idx + 1):
+            if 0 <= neighbor < len(dates):
+                chosen_indexes.add(neighbor)
+    if len(chosen_indexes) < min(len(dates), 5):
+        spread = {0, len(dates) - 1, len(dates) // 2}
+        chosen_indexes.update(idx for idx in spread if 0 <= idx < len(dates))
+    return [dates[idx] for idx in sorted(chosen_indexes)]
 
 
 def main():
@@ -121,15 +132,7 @@ def main():
 
     sys.path.insert(0, str(repo_path))
 
-    time_pref = parse_time_preference_text(args.time_pref)
-    if args.depart_after:
-        time_pref.depart_min = parse_time_preference_text(f"출발 {args.depart_after}시 이후").depart_min
-    if args.return_after:
-        time_pref.return_min = parse_time_preference_text(f"복귀 {args.return_after}시 이후").return_min
-    if args.exclude_early_before:
-        time_pref.exclude_before_depart = parse_time_preference_text(f"{args.exclude_early_before}시 이전 비행 제외").exclude_before_depart
-    if args.prefer:
-        time_pref.prefer = args.prefer
+    time_pref = parse_time_preference_args(args)
 
     logs = []
     normalized = []
@@ -331,7 +334,11 @@ def main():
                     lines.append(f"{idx}. {item['departure_date']} · {format_price(item['price'])} · {item['airline']}{time_text}")
         if summary["price_calendar"]:
             lines.append("가격 캘린더:")
-            lines.extend(item["label"] for item in summary["price_calendar"])
+            calendar_rows = summary["price_calendar"]
+            preview = calendar_rows[:10]
+            lines.extend(item["label"] for item in preview)
+            if len(calendar_rows) > len(preview):
+                lines.append(f"… 외 {len(calendar_rows) - len(preview)}일")
         print("\n".join(lines))
         return
 

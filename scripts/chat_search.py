@@ -8,7 +8,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from common_cli import parse_date_range_text
+from common_cli import parse_date_range_text, time_preference_cli_args
 
 
 def run_script(script_name: str, extra_args: list[str]) -> int:
@@ -17,18 +17,13 @@ def run_script(script_name: str, extra_args: list[str]) -> int:
 
 
 def time_args(args) -> list[str]:
-    output = []
-    if args.time_pref:
-        output.extend(["--time-pref", args.time_pref])
-    if args.depart_after:
-        output.extend(["--depart-after", args.depart_after])
-    if args.return_after:
-        output.extend(["--return-after", args.return_after])
-    if args.exclude_early_before:
-        output.extend(["--exclude-early-before", args.exclude_early_before])
-    if args.prefer:
-        output.extend(["--prefer", args.prefer])
-    return output
+    return time_preference_cli_args({
+        "time_pref": args.time_pref,
+        "depart_after": args.depart_after,
+        "return_after": args.return_after,
+        "exclude_early_before": args.exclude_early_before,
+        "prefer": args.prefer,
+    })
 
 
 def main():
@@ -119,13 +114,15 @@ def main():
             ],
         )
 
-    if has_multi_dest and args.departure and args.return_offset >= 0 and not args.return_date:
+    if has_multi_dest and args.departure and args.return_offset > 0 and not args.return_date:
         return run_script(
-            "search_multi_destination.py",
+            "search_destination_date_matrix.py",
             [
                 "--origin", args.origin,
                 "--destinations", destinations_value,
-                "--departure", args.departure,
+                "--start-date", args.departure,
+                "--end-date", args.departure,
+                "--return-offset", str(args.return_offset),
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
                 *extra_time_args,
@@ -133,14 +130,14 @@ def main():
             ],
         )
 
-    if has_multi_dest and args.departure and args.return_date:
+    if has_multi_dest and args.departure:
         return run_script(
             "search_multi_destination.py",
             [
                 "--origin", args.origin,
                 "--destinations", destinations_value,
                 "--departure", args.departure,
-                "--return-date", args.return_date,
+                *( ["--return-date", args.return_date] if args.return_date else []),
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
                 *extra_time_args,

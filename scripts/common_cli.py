@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable, List, Sequence
 
@@ -199,7 +200,20 @@ def parse_date_range_text(value: str) -> tuple[datetime, datetime]:
     if raw in ("다음주말", "다음 주말"):
         start = _next_weekday(today, 5, 1)
         return start, start + timedelta(days=1)
-    parts = re.split(r"\s*(?:~|부터|to|-)\s*", value)
+
+    explicit_patterns = [
+        r"^\s*(\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{8})\s*~\s*(\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{8})\s*$",
+        r"^\s*(\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{8})\s*to\s*(\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{8})\s*$",
+        r"^\s*(\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{8})\s*부터\s*(\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{8})\s*(?:까지)?\s*$",
+    ]
+    for pattern in explicit_patterns:
+        match = re.fullmatch(pattern, value, re.IGNORECASE)
+        if match:
+            start = parse_flexible_date(match.group(1).strip())
+            end = parse_flexible_date(match.group(2).strip())
+            return start, end
+
+    parts = re.split(r"\s*(?:~|부터|to)\s*", value, maxsplit=1)
     if len(parts) == 2 and all(part.strip() for part in parts):
         start = parse_flexible_date(parts[0].strip())
         end = parse_flexible_date(parts[1].strip())
@@ -330,24 +344,15 @@ def parse_time_to_minutes(value: str | None) -> int | None:
     return None
 
 
+@dataclass
 class TimePreference:
-    def __init__(
-        self,
-        depart_min: int | None = None,
-        depart_max: int | None = None,
-        return_min: int | None = None,
-        return_max: int | None = None,
-        exclude_before_depart: int | None = None,
-        prefer: str | None = None,
-        raw: str | None = None,
-    ):
-        self.depart_min = depart_min
-        self.depart_max = depart_max
-        self.return_min = return_min
-        self.return_max = return_max
-        self.exclude_before_depart = exclude_before_depart
-        self.prefer = prefer
-        self.raw = raw or ""
+    depart_min: int | None = None
+    depart_max: int | None = None
+    return_min: int | None = None
+    return_max: int | None = None
+    exclude_before_depart: int | None = None
+    prefer: str | None = None
+    raw: str = ""
 
     def active(self) -> bool:
         return any(
@@ -377,6 +382,109 @@ class TimePreference:
         return " · ".join(parts) if parts else None
 
 
+def _set_min(current: int | None, value: int) -> int:
+    return value if current is None else max(current, value)
+
+
+def _set_max(current: int | None, value: int) -> int:
+    return value if current is None else min(current, value)
+
+
+def _split_time_segments(text: str) -> list[str]:
+    if not text:
+        return []
+    parts = [part.strip() for part in re.split(r"\s*(?:,|/|\||;| 그리고 | and )\s*", text) if part.strip()]
+    return parts or [text.strip()]
+
+
+def _segment_scope(segment: str) -> str:
+    if any(keyword in segment for keyword in ["복귀", "귀환", "오는편", "오는 편", "리턴"]):
+        return "return"
+    return "depart"
+
+
+def _apply_bucket(pref: TimePreference, scope: str, start_hour: int, end_hour: int) -> None:
+    start_minutes = start_hour * 60
+    end_minutes = end_hour * 60 + 59
+    if scope == "return":
+        pref.return_min = _set_min(pref.return_min, start_minutes)
+        pref.return_max = _set_max(pref.return_max, end_minutes)
+    else:
+        pref.depart_min = _set_min(pref.depart_min, start_minutes)
+        pref.depart_max = _set_max(pref.depart_max, end_minutes)
+
+
+def _normalize_time_ranges(pref: TimePreference, raw: str) -> None:
+    if pref.depart_min is not None and pref.depart_max is not None and pref.depart_min > pref.depart_max:
+        if "출발" in raw and "이후" in raw:
+            pref.depart_max = None
+        elif "출발" in raw and "이전" in raw:
+            pref.depart_min = None
+    if pref.return_min is not None and pref.return_max is not None and pref.return_min > pref.return_max:
+        if any(token in raw for token in ["복귀", "귀환", "오는편", "오는 편"]) and "이후" in raw:
+            pref.return_max = None
+        elif any(token in raw for token in ["복귀", "귀환", "오는편", "오는 편"]) and "이전" in raw:
+            pref.return_min = None
+
+
+def apply_time_overrides(pref: TimePreference, *, depart_after: str | None = None, return_after: str | None = None, exclude_early_before: str | None = None, prefer: str | None = None) -> TimePreference:
+    if depart_after:
+        minutes = parse_time_to_minutes(str(depart_after))
+        if minutes is None:
+            raise ValueError(f"지원하지 않는 출발 시간 형식입니다: {depart_after}")
+        pref.depart_min = _set_min(pref.depart_min, minutes)
+    if return_after:
+        minutes = parse_time_to_minutes(str(return_after))
+        if minutes is None:
+            raise ValueError(f"지원하지 않는 복귀 시간 형식입니다: {return_after}")
+        pref.return_min = _set_min(pref.return_min, minutes)
+    if exclude_early_before:
+        minutes = parse_time_to_minutes(str(exclude_early_before))
+        if minutes is None:
+            raise ValueError(f"지원하지 않는 제외 시간 형식입니다: {exclude_early_before}")
+        pref.exclude_before_depart = _set_min(pref.exclude_before_depart, minutes)
+    if prefer:
+        pref.prefer = prefer
+    return pref
+
+
+def parse_time_preference_args(args) -> TimePreference:
+    return apply_time_overrides(
+        parse_time_preference_text(getattr(args, "time_pref", None)),
+        depart_after=getattr(args, "depart_after", None),
+        return_after=getattr(args, "return_after", None),
+        exclude_early_before=getattr(args, "exclude_early_before", None),
+        prefer=getattr(args, "prefer", None),
+    )
+
+
+def time_preference_cli_args(time_pref: dict | None) -> list[str]:
+    tp = time_pref or {}
+    args: list[str] = []
+    if tp.get("time_pref"):
+        args.extend(["--time-pref", str(tp["time_pref"])])
+    if tp.get("depart_after"):
+        args.extend(["--depart-after", str(tp["depart_after"])])
+    if tp.get("return_after"):
+        args.extend(["--return-after", str(tp["return_after"])])
+    if tp.get("exclude_early_before"):
+        args.extend(["--exclude-early-before", str(tp["exclude_early_before"])])
+    if tp.get("prefer"):
+        args.extend(["--prefer", str(tp["prefer"])])
+    return args
+
+
+def describe_time_preference_payload(time_pref: dict | None) -> str | None:
+    tp = time_pref or {}
+    pref = apply_time_overrides(
+        parse_time_preference_text(tp.get("time_pref")),
+        depart_after=tp.get("depart_after"),
+        return_after=tp.get("return_after"),
+        exclude_early_before=tp.get("exclude_early_before"),
+        prefer=tp.get("prefer"),
+    )
+    return pref.describe()
+
 def format_minutes(value: int | None) -> str:
     if value is None:
         return ""
@@ -389,49 +497,56 @@ def parse_time_preference_text(text: str | None) -> TimePreference:
     pref = TimePreference(raw=text or "")
     if not text:
         return pref
-    raw = str(text).strip().lower()
-    normalized = raw.replace("시 이후", "시이후").replace("시 이전", "시이전").replace("시 전", "시이전")
 
-    for key, (start_hour, end_hour) in TIME_BUCKETS.items():
-        if key in normalized:
-            prefer_only = f"{key} 선호" in normalized or f"{key}시간 선호" in normalized or f"{key} 시간 선호" in normalized
-            if prefer_only:
-                continue
-            if "복귀" in normalized or "귀환" in normalized or "오는편" in normalized:
-                pref.return_min = pref.return_min if pref.return_min is not None else start_hour * 60
-                pref.return_max = pref.return_max if pref.return_max is not None else end_hour * 60 + 59
-            else:
-                pref.depart_min = pref.depart_min if pref.depart_min is not None else start_hour * 60
-                pref.depart_max = pref.depart_max if pref.depart_max is not None else end_hour * 60 + 59
+    normalized = str(text).strip().lower()
+    normalized = normalized.replace("시 이후", "시이후").replace("시 이전", "시이전").replace("시 전", "시이전")
 
-    if "늦은 시간" in normalized or "늦게" in normalized:
-        pref.prefer = pref.prefer or "late"
-    elif "오전 선호" in normalized:
-        pref.prefer = pref.prefer or "morning"
-    elif "오후 선호" in normalized:
-        pref.prefer = pref.prefer or "afternoon"
-    elif "저녁 선호" in normalized:
-        pref.prefer = pref.prefer or "evening"
+    for segment in _split_time_segments(normalized):
+        scope = _segment_scope(segment)
 
-    for pattern, target in [
-        (r"출발\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "depart_min"),
-        (r"출발\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "depart_max"),
-        (r"복귀\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
-        (r"귀환\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
-        (r"오는편\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
-        (r"복귀\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
-        (r"귀환\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
-        (r"오는편\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
-        (r"너무\s*이른\s*비행\s*제외.*?(\d{1,2})(?::(\d{2}))?\s*시", "exclude_before_depart"),
-        (r"(\d{1,2})(?::(\d{2}))?\s*시\s*이전\s*비행\s*제외", "exclude_before_depart"),
-    ]:
-        match = re.search(pattern, normalized)
-        if match:
-            minutes = int(match.group(1)) * 60 + int(match.group(2) or 0)
-            setattr(pref, target, minutes)
+        for key, (start_hour, end_hour) in TIME_BUCKETS.items():
+            if key in segment:
+                prefer_only = f"{key} 선호" in segment or f"{key}시간 선호" in segment or f"{key} 시간 선호" in segment
+                if not prefer_only:
+                    _apply_bucket(pref, scope, start_hour, end_hour)
+
+        if "늦은 시간" in segment or "늦게" in segment:
+            pref.prefer = pref.prefer or "late"
+        elif "오전 선호" in segment:
+            pref.prefer = pref.prefer or "morning"
+        elif "오후 선호" in segment:
+            pref.prefer = pref.prefer or "afternoon"
+        elif "저녁 선호" in segment:
+            pref.prefer = pref.prefer or "evening"
+
+        for pattern, target in [
+            (r"출발\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "depart_min"),
+            (r"출발\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "depart_max"),
+            (r"복귀\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
+            (r"귀환\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
+            (r"오는편\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
+            (r"오는 편\s*(\d{1,2})(?::(\d{2}))?\s*시?이후", "return_min"),
+            (r"복귀\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
+            (r"귀환\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
+            (r"오는편\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
+            (r"오는 편\s*(\d{1,2})(?::(\d{2}))?\s*시?이전", "return_max"),
+            (r"너무\s*이른\s*비행\s*제외.*?(\d{1,2})(?::(\d{2}))?\s*시", "exclude_before_depart"),
+            (r"(\d{1,2})(?::(\d{2}))?\s*시\s*이전\s*비행\s*제외", "exclude_before_depart"),
+        ]:
+            match = re.search(pattern, segment)
+            if match:
+                minutes = int(match.group(1)) * 60 + int(match.group(2) or 0)
+                current = getattr(pref, target)
+                if target.endswith("_max"):
+                    setattr(pref, target, _set_max(current, minutes) if current is not None else minutes)
+                elif target == "exclude_before_depart":
+                    setattr(pref, target, _set_min(current, minutes) if current is not None else minutes)
+                else:
+                    setattr(pref, target, _set_min(current, minutes) if current is not None else minutes)
+
+        _normalize_time_ranges(pref, segment)
 
     return pref
-
 
 def _within_range(value_minutes: int | None, min_minutes: int | None, max_minutes: int | None) -> bool:
     if value_minutes is None:

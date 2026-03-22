@@ -19,6 +19,7 @@ Current scope:
 - 더 자연스러운 한국어 브리핑 출력
 - 한글 공항명 입력 지원
 - `오늘/내일/모레/이번주말/내일부터 3일` 같은 간단한 자연어 날짜 지원
+- `2026-03-25~2026-03-30`, `20260325~20260330`, `2026-03-25부터 2026-03-30` 같은 명시 날짜 범위 지원
 - 채팅 친화 래퍼 제공
 - 시간대 필터(오전/오후/저녁, 출발 N시 이후, 복귀 N시 이후, 너무 이른 비행 제외)
 - 최저가 외 시간 선호 기반 추천(예: 늦은 시간대 기준 추천)
@@ -216,7 +217,7 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
 - `--adults`: 성인 수
 - `--cabin`: `ECONOMY|BUSINESS|FIRST`
 - `--time-pref`, `--depart-after`, `--return-after`, `--exclude-early-before`, `--prefer`: 시간 필터/시간 선호 추천
-- 시간 조건이 있으면 전체 날짜를 병렬로 빠르게 훑은 뒤 상위 날짜만 상세 재검증하는 하이브리드 모드로 전환됨
+- 시간 조건이 있으면 전체 날짜를 병렬로 빠르게 훑은 뒤 상위 날짜와 인접 날짜까지 포함해 상세 재검증하는 하이브리드 모드로 전환됨
 - `summary.search_metadata` / 최상위 `search_metadata` / `logs` 에 하이브리드 여부, 전체 스캔 수, 상세 재검증 수가 기록됨
 - 결과 요약에는 날짜별 가격 캘린더/히트맵(`summary.price_calendar`)이 포함됨
 - `--human`: 자연스러운 한국어 브리핑 출력
@@ -240,7 +241,7 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
 - `--adults`: 성인 수
 - `--cabin`: `ECONOMY|BUSINESS|FIRST`
 - `--time-pref`, `--depart-after`, `--return-after`, `--exclude-early-before`, `--prefer`: 시간 필터/시간 선호 추천
-- 시간 조건이 있으면 전체 조합을 목적지별 병렬 스캔으로 먼저 좁힌 뒤 상위 조합만 상세 재검증하는 하이브리드 모드로 전환됨
+- 시간 조건이 있으면 전체 조합을 목적지별 병렬 스캔으로 먼저 좁힌 뒤 상위 조합과 인접 날짜 조합까지 포함해 상세 재검증하는 하이브리드 모드로 전환됨
 - `summary.search_metadata` / 최상위 `search_metadata` / `logs` 에 하이브리드 여부, 전체 스캔 수, 상세 재검증 수가 기록됨
 - `--human`: 전체 최적 조합 + 목적지별 베스트 브리핑 출력
 
@@ -251,7 +252,7 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
 - `--when`: 자연어 날짜/날짜범위
 - `--departure`: 명시적 출발일
 - `--return-date`: 명시적 귀국일
-- `--return-offset`: 날짜범위 왕복 오프셋
+- `--return-offset`: 날짜범위 왕복 오프셋. `chat_search.py`에서는 다중 목적지 + 명시적 `--departure` 와 함께 써도 단일일 매트릭스 왕복 탐색으로 라우팅됨
 - `--time-pref`: 자연어 시간 선호/필터 입력
 - `--depart-after`, `--return-after`, `--exclude-early-before`, `--prefer`: 옵션 기반 시간 필터
 - `--json`: JSON 출력, 생략 시 사람이 읽기 쉬운 브리핑 출력

@@ -23,7 +23,7 @@ from common_cli import (
     normalize_airport,
     parse_date_range_text,
     parse_flexible_date,
-    parse_time_preference_text,
+    parse_time_preference_args,
     pretty_date,
     recommendation_line,
     round_trip_balance_recommendation,
@@ -69,18 +69,28 @@ def _choose_refine_combos(destinations, broad_rows):
 
     chosen = []
     seen = set()
+    rows_by_destination = {destination: [row for row in available if row["destination"] == destination] for destination in destinations}
 
-    # 목적지별 상위 2개씩 확보해 저렴한 날짜가 목적지별로 한 번은 검증되게 한다.
     for destination in destinations:
-        rows = sorted([row for row in available if row["destination"] == destination], key=lambda x: x["price"])[:2]
+        rows = sorted(rows_by_destination[destination], key=lambda x: x["price"])[:3]
+        ordered_dates = [row["departure_date"] for row in sorted(rows_by_destination[destination], key=lambda x: x["departure_date"])]
         for row in rows:
             key = (row["destination"], row["departure_date"])
             if key not in seen:
                 chosen.append(row)
                 seen.add(key)
+            if row["departure_date"] in ordered_dates:
+                idx = ordered_dates.index(row["departure_date"])
+                for neighbor in (idx - 1, idx + 1):
+                    if 0 <= neighbor < len(ordered_dates):
+                        neighbor_key = (destination, ordered_dates[neighbor])
+                        if neighbor_key not in seen:
+                            neighbor_row = next((item for item in rows_by_destination[destination] if item["departure_date"] == ordered_dates[neighbor]), None)
+                            if neighbor_row:
+                                chosen.append(neighbor_row)
+                                seen.add(neighbor_key)
 
-    # 전체 최저가 상위권도 추가 검증한다.
-    for row in sorted(available, key=lambda x: x["price"])[:10]:
+    for row in sorted(available, key=lambda x: x["price"])[:15]:
         key = (row["destination"], row["departure_date"])
         if key not in seen:
             chosen.append(row)
@@ -138,15 +148,7 @@ def main():
 
     sys.path.insert(0, str(repo_path))
 
-    time_pref = parse_time_preference_text(args.time_pref)
-    if args.depart_after:
-        time_pref.depart_min = parse_time_preference_text(f"출발 {args.depart_after}시 이후").depart_min
-    if args.return_after:
-        time_pref.return_min = parse_time_preference_text(f"복귀 {args.return_after}시 이후").return_min
-    if args.exclude_early_before:
-        time_pref.exclude_before_depart = parse_time_preference_text(f"{args.exclude_early_before}시 이전 비행 제외").exclude_before_depart
-    if args.prefer:
-        time_pref.prefer = args.prefer
+    time_pref = parse_time_preference_args(args)
 
     logs = []
     destination_rows = []
@@ -391,7 +393,11 @@ def main():
             lines.append("목적지별 가격 캘린더:")
             for item in destination_rows[:5]:
                 lines.append(f"- {item['destination_label']}")
-                lines.extend(f"  {entry['label']}" for entry in item.get("price_calendar", []))
+                calendar_rows = item.get("price_calendar", [])
+                preview = calendar_rows[:7]
+                lines.extend(f"  {entry['label']}" for entry in preview)
+                if len(calendar_rows) > len(preview):
+                    lines.append(f"  … 외 {len(calendar_rows) - len(preview)}일")
         if ranked_combos:
             lines.append("전체 상위 조합:")
             for idx, item in enumerate(ranked_combos[:7], start=1):

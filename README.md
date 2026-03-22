@@ -25,7 +25,7 @@
 - 추천 사유 설명 출력
 
 ### 2. 날짜 범위 최저가 탐색
-- `내일부터 3일`, `이번주말`, `다음주말` 같은 자연어 입력 지원
+- `내일부터 3일`, `이번주말`, `다음주말`, `2026-03-25~2026-03-30` 같은 자연어/명시 범위 입력 지원
 - 날짜별 가격 캘린더 제공
 - 왕복 검색 시 균형 추천 제공
 - 시간 조건이 있을 때는 빠른 전체 스캔 후 상위 후보만 상세 재검증하는 하이브리드 최적화 적용
@@ -79,6 +79,7 @@ python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포
 - 왕복 균형 추천
 - 날짜별 가격 캘린더
 - 목적지별 가격 캘린더
+- 사람용 출력에서는 너무 길어지지 않도록 캘린더를 일부만 미리 보여주고 나머지 일수는 축약 표시
 
 예를 들어:
 - **추천:** 이번 조건에서는 부산(PUS) 조합이 가장 유리합니다.
@@ -107,6 +108,7 @@ python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포
 - 모든 주요 스크립트 `py_compile` 통과
 - `price_alerts.py add/list/remove` 동작 확인
 - `chat_search.py`를 통한 다중 목적지+날짜 범위 JSON 검색 동작 확인
+- `chat_search.py`에서 다중 목적지 + 명시적 출발일 + `--return-offset` 조합이 날짜 매트릭스로 올바르게 라우팅되도록 보정
 - 다중 목적지+날짜 범위 검색에서 목적지별 `price_calendar` 출력 확인
 
 ---

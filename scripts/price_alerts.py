@@ -25,7 +25,7 @@ DEFAULT_MESSAGE_TEMPLATE = """[국내선 가격 알림] {label}
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from common_cli import airport_label, cabin_label, format_price, normalize_airport, parse_date_range_text, parse_flexible_date, parse_time_preference_text, pretty_date, unique_codes
+from common_cli import airport_label, cabin_label, describe_time_preference_payload, format_price, normalize_airport, parse_date_range_text, parse_flexible_date, pretty_date, time_preference_cli_args, unique_codes
 
 
 def now_iso() -> str:
@@ -164,15 +164,7 @@ def describe_rule(rule: dict[str, Any]) -> str:
     state = "ON" if rule.get("enabled", True) else "OFF"
     template_flag = "사용자 템플릿" if rule.get("notify", {}).get("message_template") else "기본 템플릿"
     time_pref = q.get("time_preference") or {}
-    time_pref_text = parse_time_preference_text(time_pref.get("time_pref")).describe() if time_pref.get("time_pref") else None
-    if time_pref.get("depart_after"):
-        time_pref_text = " · ".join(filter(None, [time_pref_text, f"출발 {time_pref['depart_after']} 이후"]))
-    if time_pref.get("return_after"):
-        time_pref_text = " · ".join(filter(None, [time_pref_text, f"복귀 {time_pref['return_after']} 이후"]))
-    if time_pref.get("exclude_early_before"):
-        time_pref_text = " · ".join(filter(None, [time_pref_text, f"{time_pref['exclude_early_before']} 이전 출발 제외"]))
-    if time_pref.get("prefer"):
-        time_pref_text = " · ".join(filter(None, [time_pref_text, f"선호 {time_pref['prefer']}"]))
+    time_pref_text = describe_time_preference_payload(time_pref)
     time_pref_line = f"\n- 시간 조건: {time_pref_text}" if time_pref_text else ""
     return (
         f"[{state}] {rule['id']} | {rule['label']}\n"
@@ -203,16 +195,7 @@ def check_rule(rule: dict[str, Any]) -> dict[str, Any]:
         "--cabin", q["cabin"],
     ]
     tp = q.get("time_preference") or {}
-    if tp.get("time_pref"):
-        common.extend(["--time-pref", tp["time_pref"]])
-    if tp.get("depart_after"):
-        common.extend(["--depart-after", str(tp["depart_after"])])
-    if tp.get("return_after"):
-        common.extend(["--return-after", str(tp["return_after"])])
-    if tp.get("exclude_early_before"):
-        common.extend(["--exclude-early-before", str(tp["exclude_early_before"])])
-    if tp.get("prefer"):
-        common.extend(["--prefer", tp["prefer"]])
+    common.extend(time_preference_cli_args(tp))
 
     if len(destinations) > 1 and q.get("date_range"):
         payload = run_search(
