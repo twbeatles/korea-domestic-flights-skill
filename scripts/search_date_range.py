@@ -18,7 +18,9 @@ from common_cli import (
     build_best_option_reasons,
     build_price_calendar,
     cabin_label,
+    close_safely,
     choose_balanced_round_trip_option,
+    emit_json,
     explain_recommendation,
     filter_and_rank_by_time_preference,
     format_price,
@@ -30,8 +32,12 @@ from common_cli import (
     parse_time_preference_args,
     pretty_date,
     recommendation_line,
+    resolve_source_repo,
     round_trip_balance_recommendation,
     time_preference_recommendation,
+    unverified_broad_rows,
+    verified_priced_rows,
+    verify_return_offset,
 )
 from hybrid_observability import build_refine_diagnostics, choose_fallback_plan
 
@@ -60,7 +66,10 @@ def _empty_row(dep, ret, price=0, airline=""):
         "price": price,
         "airline": airline,
         "departure_time": "",
+        "arrival_time": "",
+        "return_airline": "",
         "return_departure_time": "",
+        "return_arrival_time": "",
         "preferred_option": None,
         "time_recommendation": None,
         "search_stage": "broad_only",
@@ -274,7 +283,10 @@ def _refine_single_date(searcher, origin, destination, dep, ret, args, time_pref
         "price": cheapest.get("price", 0) if cheapest else 0,
         "airline": cheapest.get("airline", "") if cheapest else "",
         "departure_time": cheapest.get("departure_time", "") if cheapest else "",
+        "arrival_time": cheapest.get("arrival_time", "") if cheapest else "",
+        "return_airline": cheapest.get("return_airline", "") if cheapest else "",
         "return_departure_time": cheapest.get("return_departure_time", "") if cheapest else "",
+        "return_arrival_time": cheapest.get("return_arrival_time", "") if cheapest else "",
         "preferred_option": preferred,
         "time_recommendation": time_preference_recommendation(preferred, cheapest, time_pref),
         "search_stage": stage,
@@ -307,6 +319,7 @@ def main():
     parser.add_argument("--exclude-early-before")
     parser.add_argument("--prefer", choices=["late", "morning", "afternoon", "evening"])
     parser.add_argument("--human", action="store_true")
+    parser.add_argument("--repo-path", help="upstream Scraping-flight-information 저장소 경로")
     args = parser.parse_args()
 
     try:
@@ -319,23 +332,24 @@ def main():
             end_dt = parse_flexible_date(args.end_date)
         else:
             raise ValueError("start/end-date 또는 --date-range 중 하나를 제공해야 합니다.")
+        verify_return_offset(args.return_offset)
     except ValueError as exc:
-        print(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": str(exc)})
         sys.exit(1)
 
     if end_dt < start_dt:
-        print(json.dumps({"status": "error", "message": "end-date must be after or equal to start-date"}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": "end-date must be after or equal to start-date"})
         sys.exit(1)
 
     dates = build_dates(start_dt, end_dt)
     if len(dates) > 30:
-        print(json.dumps({"status": "error", "message": "date range must be 30 days or less"}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": "date range must be 30 days or less"})
         sys.exit(1)
 
-    workspace = Path(__file__).resolve().parents[3]
-    repo_path = workspace / "tmp" / "Scraping-flight-information"
-    if not repo_path.exists():
-        print(json.dumps({"status": "error", "message": "Source repository clone not found.", "expected": str(repo_path)}, ensure_ascii=False, indent=2))
+    try:
+        repo_path = resolve_source_repo(script_path=__file__, repo_path=args.repo_path)
+    except FileNotFoundError as exc:
+        emit_json({"status": "error", "message": "Source repository clone not found.", "details": str(exc)})
         sys.exit(1)
 
     sys.path.insert(0, str(repo_path))
@@ -371,21 +385,24 @@ def main():
             from scraping.parallel import ParallelSearcher
             from scraping.searcher import FlightSearcher
         except Exception as exc:
-            print(json.dumps({"status": "error", "message": "Failed to import hybrid search components.", "details": str(exc)}, ensure_ascii=False, indent=2))
+            emit_json({"status": "error", "message": "Failed to import hybrid search components.", "details": str(exc)})
             sys.exit(1)
 
         search_metadata["strategy"] = "hybrid_parallel_then_detailed"
         parallel_searcher = ParallelSearcher()
-        logs.append("hybrid mode: broad parallel scan started")
-        broad_raw = parallel_searcher.search_date_range(
-            origin=origin,
-            destination=destination,
-            dates=[d.strftime("%Y%m%d") for d in dates],
-            return_offset=args.return_offset,
-            adults=args.adults,
-            cabin_class=args.cabin,
-            progress_callback=lambda msg: logs.append(f"[broad] {msg}"),
-        )
+        try:
+            logs.append("hybrid mode: broad parallel scan started")
+            broad_raw = parallel_searcher.search_date_range(
+                origin=origin,
+                destination=destination,
+                dates=[d.strftime("%Y%m%d") for d in dates],
+                return_offset=args.return_offset,
+                adults=args.adults,
+                cabin_class=args.cabin,
+                progress_callback=lambda msg: logs.append(f"[broad] {msg}"),
+            )
+        finally:
+            close_safely(parallel_searcher)
         broad_rows = []
         for d in dates:
             dep = pretty_date(d)
@@ -484,10 +501,7 @@ def main():
                     search_metadata["developer_diagnostic_hint"] = diagnostics.get("developer_hint")
                     logs.append(f"hybrid refine diagnostics (after fallback): {diagnostics['summary_text']}")
         finally:
-            try:
-                searcher.close()
-            except Exception:
-                pass
+            close_safely(searcher)
 
         for broad in broad_rows:
             normalized.append(detailed_by_date.get(broad["departure_date"], broad))
@@ -495,18 +509,21 @@ def main():
         try:
             from scraping.parallel import ParallelSearcher
         except Exception as exc:
-            print(json.dumps({"status": "error", "message": "Failed to import parallel searcher.", "details": str(exc)}, ensure_ascii=False, indent=2))
+            emit_json({"status": "error", "message": "Failed to import parallel searcher.", "details": str(exc)})
             sys.exit(1)
         searcher = ParallelSearcher()
-        raw = searcher.search_date_range(
-            origin=origin,
-            destination=destination,
-            dates=[d.strftime("%Y%m%d") for d in dates],
-            return_offset=args.return_offset,
-            adults=args.adults,
-            cabin_class=args.cabin,
-            progress_callback=lambda msg: logs.append(str(msg)),
-        )
+        try:
+            raw = searcher.search_date_range(
+                origin=origin,
+                destination=destination,
+                dates=[d.strftime("%Y%m%d") for d in dates],
+                return_offset=args.return_offset,
+                adults=args.adults,
+                cabin_class=args.cabin,
+                progress_callback=lambda msg: logs.append(str(msg)),
+            )
+        finally:
+            close_safely(searcher)
         for d in dates:
             key = d.strftime("%Y%m%d")
             price, airline = raw.get(key, (0, "N/A"))
@@ -516,7 +533,10 @@ def main():
                 "price": price,
                 "airline": airline,
                 "departure_time": "",
+                "arrival_time": "",
+                "return_airline": "",
                 "return_departure_time": "",
+                "return_arrival_time": "",
                 "preferred_option": None,
                 "time_recommendation": None,
                 "search_stage": "parallel",
@@ -527,8 +547,12 @@ def main():
             })
         search_metadata["broad_scan_available"] = len([item for item in normalized if item["price"] and item["price"] > 0])
 
-    available = [item for item in normalized if item["price"] and item["price"] > 0]
-    available.sort(key=lambda x: x["price"])
+    available = verified_priced_rows(normalized, time_pref_active=time_pref.active())
+    unverified_candidates = unverified_broad_rows(normalized) if time_pref.active() else []
+    search_metadata["verified_results_required"] = time_pref.active()
+    search_metadata["verified_result_count"] = len(available)
+    search_metadata["unverified_broad_result_count"] = len(unverified_candidates)
+    search_metadata["unverified_candidates"] = [_candidate_detail(row) for row in unverified_candidates[:5]]
     cheapest = available[0] if available else None
     second_price = available[1]["price"] if len(available) > 1 else None
 
@@ -550,6 +574,7 @@ def main():
         "price_calendar": price_calendar,
         "balanced_round_trip": balanced_option,
         "diagnostic_hint": search_metadata.get("diagnostic_hint"),
+        "unverified_candidates": unverified_candidates[:5],
         "recommendation": recommendation_line(
             f"{cheapest['departure_date']}{f'~{cheapest['return_date']}' if cheapest and cheapest['return_date'] else ''}",
             cheapest["price"],
@@ -602,8 +627,11 @@ def main():
                 hybrid_text += f" + fallback {search_metadata['fallback_refined_dates']}일"
             hybrid_text += ")"
             lines.append(hybrid_text)
+            lines.append("추천/상위 날짜는 상세 검증과 시간 조건을 통과한 결과만 반영합니다.")
         if search_metadata.get("diagnostic_hint"):
             lines.append(f"참고: {search_metadata['diagnostic_hint']}")
+        if not cheapest and unverified_candidates:
+            lines.append(f"참고: 빠른 스캔 저가 후보 {len(unverified_candidates)}건이 있었지만 상세 검증 통과 결과는 없습니다.")
 
         add_section(lines, "최저가", [
             f"최저가 날짜: {date_row_text(cheapest)}" if cheapest else None,
@@ -613,6 +641,10 @@ def main():
         add_section(lines, "시간대 추천", [summary.get("time_recommendation")])
         add_section(lines, "왕복 균형 추천", [summary.get("balanced_recommendation"), summary.get("balanced_recommendation_explained")])
         add_section(lines, "상위 날짜", [f"{idx}. {date_row_text(item)}" for idx, item in enumerate(summary.get("top_dates", []), start=1)])
+        add_section(lines, "빠른 스캔 후보", [
+            f"{idx}. {date_row_text(item)} (미검증 참고용)"
+            for idx, item in enumerate(summary.get("unverified_candidates", []), start=1)
+        ])
         if summary["price_calendar"]:
             calendar_rows = summary["price_calendar"]
             preview = calendar_rows[:10]
@@ -620,7 +652,7 @@ def main():
         print("\n".join(lines))
         return
 
-    print(json.dumps({
+    emit_json({
         "status": "success",
         "query": {
             "origin": origin,
@@ -636,7 +668,7 @@ def main():
         "results": normalized,
         "logs": logs,
         "search_metadata": search_metadata,
-    }, ensure_ascii=False, indent=2))
+    })
 
 
 if __name__ == "__main__":

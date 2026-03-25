@@ -51,22 +51,22 @@
 
 ### 단일 검색
 ```bash
-python skills/korea-domestic-flights/scripts/search_domestic.py --origin 김포 --destination 제주 --departure 내일 --human
+python scripts/search_domestic.py --origin 김포 --destination 제주 --departure 내일 --human
 ```
 
 ### 날짜 범위 검색
 ```bash
-python skills/korea-domestic-flights/scripts/search_date_range.py --origin 김포 --destination 제주 --date-range "내일부터 3일" --human
+python scripts/search_date_range.py --origin 김포 --destination 제주 --date-range "내일부터 3일" --human
 ```
 
 ### 다중 목적지 + 날짜 범위 검색
 ```bash
-python skills/korea-domestic-flights/scripts/search_destination_date_matrix.py --origin 김포 --destinations 제주,부산 --date-range "다음주말" --return-offset 2 --human
+python scripts/search_destination_date_matrix.py --origin 김포 --destinations 제주,부산 --date-range "다음주말" --return-offset 2 --human
 ```
 
 ### 시간 조건 포함 가격 감시 규칙 저장
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --target-price 150000 --time-pref "복귀 18시 이후, 늦은 시간 선호" --label "주말 늦복 왕복 감시"
+python scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --target-price 150000 --time-pref "복귀 18시 이후, 늦은 시간 선호" --label "주말 늦복 왕복 감시"
 ```
 
 ---
@@ -82,6 +82,7 @@ python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포
 - 목적지별 가격 캘린더
 - 사람용 출력에서는 `최저가`, `시간대 추천`, `왕복 균형 추천` 같은 구획을 나눠 더 읽기 쉽게 표시
 - 사람용 출력에서는 너무 길어지지 않도록 캘린더를 일부만 미리 보여주고 나머지 일수는 축약 표시
+- 시간 조건 하이브리드 검색에서는 추천/상위 결과를 **상세 검증 + 시간 조건 통과 결과만** 기준으로 잡고, 빠른 스캔 후보는 참고용으로만 분리 표시
 
 예를 들어:
 - **추천:** 이번 조건에서는 부산(PUS) 조합이 가장 유리합니다.
@@ -95,6 +96,13 @@ python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포
 이 스킬은 다음 로컬 소스 저장소를 감쌉니다.
 
 - `tmp/Scraping-flight-information`
+
+upstream 저장소 위치는 다음 순서로 찾습니다.
+
+- `--repo-path`
+- `KDF_SOURCE_REPO`
+- 현재 저장소/상위 폴더의 `tmp/Scraping-flight-information`
+- 현재 저장소/상위 폴더의 `Scraping-flight-information`
 
 필요 조건:
 - Playwright/브라우저 실행 가능 환경
@@ -110,9 +118,10 @@ python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포
 - 모든 주요 스크립트 `py_compile` 통과
 - `price_alerts.py add/list/remove` 동작 확인
 - `chat_search.py`를 통한 다중 목적지+날짜 범위 JSON 검색 동작 확인
-- `chat_search.py`에서 다중 목적지 + 명시적 출발일 + `--return-offset` 조합이 날짜 매트릭스로 올바르게 라우팅되도록 보정
+- `chat_search.py`에서 다중 목적지 + 명시적 출발일 + `--return-offset` 조합이 날짜 매트릭스로, 단일 목적지 + 동일 조합이 1일 범위 검색으로 올바르게 라우팅되도록 보정
 - 다중 목적지+날짜 범위 검색에서 목적지별 `price_calendar` 출력 확인
 - `references/hybrid-smoke-fixtures.json` 기반 회귀/스모크 진단 케이스 확인
+- `scripts/regression_smoke_check.py` 로 경로 탐색/KST/알림 dedupe/return-offset 보정 회귀 확인
 - `hybrid_live_dry_run.py`로 환경 전용 또는 얕은 live probe 점검 가능
 
 ---
@@ -125,6 +134,7 @@ python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포
 - JSON `summary.search_metadata` / 최상위 `search_metadata` 와 `logs` 에 하이브리드 사용 여부, 초기/추가 재검증 수, fallback 여부, 시간 조건 요약과 `refine_diagnostics`(시간조건 탈락 / usable match 없음 / 빠른스캔-상세 불일치 빈결과 / 시간·가격 정보 완전누락/부분누락 분류, 샘플, `human_hint`/`developer_hint`, `extraction_summary`, `ranked_reasons`, `dominant_reason_code`, `primary_interpretation`)가 기록됩니다.
 - fallback 판단은 `fallback_decision` / `fallback_reason_codes` 로 구조화되어 남아 extraction incompleteness 우세인지 genuine time-filter rejection 우세인지 구분하기 쉽게 했습니다.
 - 사람용 출력에서는 필요할 때만 한 줄짜리 `참고:` 진단 힌트를 덧붙이고, 더 자세한 디버그성 힌트와 커버리지 수치는 JSON 메타데이터에만 남겨서 사람용 출력이 시끄러워지지 않게 유지합니다.
+- Windows 환경에서 `price_alerts.py check` 는 UTF-8 서브프로세스 모드로 검색 스크립트를 실행합니다.
 - 국제선은 범위 밖입니다.
 
 자세한 사용법은 `SKILL.md`를 참고하세요.

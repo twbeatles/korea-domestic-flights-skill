@@ -26,6 +26,10 @@ def time_args(args) -> list[str]:
     })
 
 
+def repo_args(args) -> list[str]:
+    return ["--repo-path", args.repo_path] if args.repo_path else []
+
+
 def main():
     parser = argparse.ArgumentParser(description="Chat-friendly wrapper for Korea domestic flight search")
     parser.add_argument("--origin", required=True, help="예: 김포")
@@ -43,10 +47,12 @@ def main():
     parser.add_argument("--exclude-early-before")
     parser.add_argument("--prefer", choices=["late", "morning", "afternoon", "evening"])
     parser.add_argument("--json", action="store_true", help="JSON 출력")
+    parser.add_argument("--repo-path", help="upstream Scraping-flight-information 저장소 경로")
     args = parser.parse_args()
 
     human = [] if args.json else ["--human"]
     extra_time_args = time_args(args)
+    extra_repo_args = repo_args(args)
 
     has_multi_dest = bool(args.destinations and "," in args.destinations or (args.destinations and args.destination))
     destinations_value = args.destinations or args.destination
@@ -56,7 +62,7 @@ def main():
     if args.when and not args.departure:
         start_dt, end_dt = parse_date_range_text(args.when)
         inferred_single_day = start_dt == end_dt
-        if has_multi_dest and not inferred_single_day:
+        if has_multi_dest and (not inferred_single_day or (args.return_offset > 0 and not args.return_date)):
             return run_script(
                 "search_destination_date_matrix.py",
                 [
@@ -67,6 +73,7 @@ def main():
                     "--return-offset", str(args.return_offset),
                     "--adults", str(args.adults),
                     "--cabin", args.cabin,
+                    *extra_repo_args,
                     *extra_time_args,
                     *human,
                 ],
@@ -81,11 +88,12 @@ def main():
                     *(["--return-date", args.return_date] if args.return_date else []),
                     "--adults", str(args.adults),
                     "--cabin", args.cabin,
+                    *extra_repo_args,
                     *extra_time_args,
                     *human,
                 ],
             )
-        if not inferred_single_day:
+        if not inferred_single_day or (args.return_offset > 0 and not args.return_date):
             return run_script(
                 "search_date_range.py",
                 [
@@ -96,6 +104,7 @@ def main():
                     "--return-offset", str(args.return_offset),
                     "--adults", str(args.adults),
                     "--cabin", args.cabin,
+                    *extra_repo_args,
                     *extra_time_args,
                     *human,
                 ],
@@ -109,6 +118,7 @@ def main():
                 *(["--return-date", args.return_date] if args.return_date else []),
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
+                *extra_repo_args,
                 *extra_time_args,
                 *human,
             ],
@@ -125,6 +135,24 @@ def main():
                 "--return-offset", str(args.return_offset),
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
+                *extra_repo_args,
+                *extra_time_args,
+                *human,
+            ],
+        )
+
+    if args.departure and args.return_offset > 0 and not args.return_date:
+        return run_script(
+            "search_date_range.py",
+            [
+                "--origin", args.origin,
+                "--destination", destinations_value,
+                "--start-date", args.departure,
+                "--end-date", args.departure,
+                "--return-offset", str(args.return_offset),
+                "--adults", str(args.adults),
+                "--cabin", args.cabin,
+                *extra_repo_args,
                 *extra_time_args,
                 *human,
             ],
@@ -140,6 +168,7 @@ def main():
                 *( ["--return-date", args.return_date] if args.return_date else []),
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
+                *extra_repo_args,
                 *extra_time_args,
                 *human,
             ],
@@ -155,6 +184,7 @@ def main():
                 *(["--return-date", args.return_date] if args.return_date else []),
                 "--adults", str(args.adults),
                 "--cabin", args.cabin,
+                *extra_repo_args,
                 *extra_time_args,
                 *human,
             ],

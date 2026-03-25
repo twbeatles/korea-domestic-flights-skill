@@ -14,6 +14,8 @@ from common_cli import (
     airport_label,
     build_best_option_reasons,
     cabin_label,
+    close_safely,
+    emit_json,
     explain_recommendation,
     filter_and_rank_by_time_preference,
     format_price,
@@ -24,7 +26,9 @@ from common_cli import (
     parse_time_preference_args,
     pretty_date,
     recommendation_line,
+    resolve_source_repo,
     time_preference_recommendation,
+    verify_date_order,
 )
 
 
@@ -140,13 +144,13 @@ def main():
     parser.add_argument("--exclude-early-before", help="이 시간 이전 출발 제외. 예: 8, 08:30")
     parser.add_argument("--prefer", choices=["late", "morning", "afternoon", "evening"], help="시간대 선호 추천")
     parser.add_argument("--human", action="store_true")
+    parser.add_argument("--repo-path", help="upstream Scraping-flight-information 저장소 경로")
     args = parser.parse_args()
 
-    workspace = Path(__file__).resolve().parents[3]
-    repo_path = workspace / "tmp" / "Scraping-flight-information"
-
-    if not repo_path.exists():
-        print(json.dumps({"status": "error", "message": "Source repository clone not found.", "expected": str(repo_path)}, ensure_ascii=False, indent=2))
+    try:
+        repo_path = resolve_source_repo(script_path=__file__, repo_path=args.repo_path)
+    except FileNotFoundError as exc:
+        emit_json({"status": "error", "message": "Source repository clone not found.", "details": str(exc)})
         sys.exit(1)
 
     sys.path.insert(0, str(repo_path))
@@ -154,7 +158,7 @@ def main():
     try:
         from scraping.searcher import FlightSearcher
     except Exception as exc:
-        print(json.dumps({"status": "error", "message": "Failed to import flight searcher.", "details": str(exc), "repo": str(repo_path)}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": "Failed to import flight searcher.", "details": str(exc), "repo": str(repo_path)})
         sys.exit(1)
 
     try:
@@ -162,8 +166,9 @@ def main():
         destination = normalize_airport(args.destination)
         departure = pretty_date(parse_flexible_date(args.departure))
         return_date = pretty_date(parse_flexible_date(args.return_date)) if args.return_date else None
+        verify_date_order(departure, return_date)
     except ValueError as exc:
-        print(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": str(exc)})
         sys.exit(1)
 
     time_pref = parse_time_preference_args(args)
@@ -208,7 +213,7 @@ def main():
             print(format_human(summary, query, len(normalized), time_pref))
             return
 
-        print(json.dumps({
+        emit_json({
             "status": "success",
             "query": query,
             "count": len(normalized),
@@ -218,12 +223,9 @@ def main():
             "results": normalized,
             "all_results_before_time_filter": all_results,
             "logs": logs,
-        }, ensure_ascii=False, indent=2))
+        })
     finally:
-        try:
-            searcher.close()
-        except Exception:
-            pass
+        close_safely(searcher)
 
 
 if __name__ == "__main__":

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,11 +25,26 @@ DEFAULT_MESSAGE_TEMPLATE = """[국내선 가격 알림] {label}
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from common_cli import airport_label, cabin_label, describe_time_preference_payload, format_price, normalize_airport, parse_date_range_text, parse_flexible_date, pretty_date, time_preference_cli_args, unique_codes
+from common_cli import (
+    airport_label,
+    cabin_label,
+    describe_time_preference_payload,
+    format_price,
+    normalize_airport,
+    parse_date_range_text,
+    parse_flexible_date,
+    pretty_date,
+    resolve_source_repo,
+    seoul_now,
+    time_preference_cli_args,
+    unique_codes,
+    verify_date_order,
+    verify_return_offset,
+)
 
 
 def now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    return seoul_now().isoformat(timespec="seconds")
 
 
 def load_store(path: Path) -> dict[str, Any]:
@@ -74,8 +89,20 @@ def canonical_signature(payload: dict[str, Any]) -> str:
 def make_rule(args) -> dict[str, Any]:
     origin = normalize_airport(args.origin)
     destinations = _parse_destinations(args)
+    if args.date_range and args.return_date:
+        raise ValueError("--date-range 와 --return-date 는 함께 사용할 수 없습니다.")
+    if args.return_date and args.return_offset > 0:
+        raise ValueError("--return-date 와 --return-offset 는 함께 사용할 수 없습니다.")
+
+    stored_source_repo = None
+    if getattr(args, "repo_path", None):
+        stored_source_repo = str(resolve_source_repo(script_path=__file__, repo_path=args.repo_path))
+
     if args.date_range:
         start_dt, end_dt = parse_date_range_text(args.date_range)
+        if end_dt < start_dt:
+            raise ValueError("date-range 의 종료일은 시작일과 같거나 이후여야 합니다.")
+        verify_return_offset(args.return_offset)
         departure = None
         return_date = None
         date_range = {
@@ -83,9 +110,19 @@ def make_rule(args) -> dict[str, Any]:
             "end_date": pretty_date(end_dt),
         }
     else:
-        departure = pretty_date(parse_flexible_date(args.departure))
+        departure_dt = parse_flexible_date(args.departure)
+        departure = pretty_date(departure_dt)
         return_date = pretty_date(parse_flexible_date(args.return_date)) if args.return_date else None
-        date_range = None
+        verify_date_order(departure, return_date)
+        if args.return_offset > 0 and not return_date:
+            date_range = {
+                "start_date": departure,
+                "end_date": departure,
+            }
+            departure = None
+        else:
+            verify_return_offset(args.return_offset)
+            date_range = None
 
     trip_type = "round_trip" if return_date or args.return_offset > 0 else "one_way"
     destination_label = airport_label(destinations[0]) if len(destinations) == 1 else ", ".join(airport_label(code) for code in destinations)
@@ -131,6 +168,7 @@ def make_rule(args) -> dict[str, Any]:
             "cabin": args.cabin,
             "trip_type": trip_type,
             "time_preference": time_preference,
+            "source_repo_path": stored_source_repo,
         },
         "target_price_krw": args.target_price,
         "created_at": now_iso(),
@@ -176,8 +214,10 @@ def describe_rule(rule: dict[str, Any]) -> str:
 
 
 def run_search(script_name: str, params: list[str]) -> dict[str, Any]:
-    command = [sys.executable, str(SCRIPT_DIR / script_name), *params]
-    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+    command = [sys.executable, "-X", "utf8", str(SCRIPT_DIR / script_name), *params]
+    env = os.environ.copy()
+    env.setdefault("PYTHONUTF8", "1")
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", env=env)
     if result.returncode != 0:
         raise RuntimeError(result.stdout or result.stderr or f"검색 스크립트 실패: {script_name}")
     try:
@@ -186,7 +226,7 @@ def run_search(script_name: str, params: list[str]) -> dict[str, Any]:
         raise RuntimeError(f"검색 결과를 JSON으로 해석하지 못했습니다: {exc}\n{result.stdout[:800]}") from exc
 
 
-def check_rule(rule: dict[str, Any]) -> dict[str, Any]:
+def check_rule(rule: dict[str, Any], *, repo_path: str | None = None) -> dict[str, Any]:
     q = rule["query"]
     destinations = q.get("destinations") or ([q["destination"]] if q.get("destination") else [])
     common = [
@@ -194,6 +234,9 @@ def check_rule(rule: dict[str, Any]) -> dict[str, Any]:
         "--adults", str(q["adults"]),
         "--cabin", q["cabin"],
     ]
+    effective_repo_path = repo_path or q.get("source_repo_path")
+    if effective_repo_path:
+        common.extend(["--repo-path", str(effective_repo_path)])
     tp = q.get("time_preference") or {}
     common.extend(time_preference_cli_args(tp))
 
@@ -229,20 +272,12 @@ def check_rule(rule: dict[str, Any]) -> dict[str, Any]:
             ],
         )
         best = payload.get("summary", {}).get("best_option")
-        matched = bool(best and best.get("cheapest_price", 0) and best["cheapest_price"] <= rule["target_price_krw"])
+        price = best.get("price", 0) if best else 0
+        matched = bool(best and price and price <= rule["target_price_krw"])
         return {
             "matched": matched,
-            "observed_price_krw": best.get("cheapest_price", 0) if best else 0,
-            "best_option": {
-                "destination": best.get("destination") if best else None,
-                "destination_label": best.get("destination_label") if best else None,
-                "price": best.get("cheapest_price", 0) if best else 0,
-                "airline": best.get("airline") if best else None,
-                "departure_time": best.get("departure_time") if best else None,
-                "arrival_time": best.get("arrival_time") if best else None,
-                "departure_date": q.get("departure"),
-                "return_date": q.get("return_date"),
-            },
+            "observed_price_krw": price,
+            "best_option": best,
             "search_type": "multi_destination",
             "raw_summary": payload.get("summary"),
         }
@@ -316,13 +351,39 @@ def build_notification_context(rule: dict[str, Any], result: dict[str, Any]) -> 
         date_text = departure_date or ""
         if return_date:
             date_text += f" ~ {return_date}"
-    best_destination_label = best.get("destination_label") or airport_label(best.get("destination")) if best.get("destination") else ""
+    if best.get("destination_label"):
+        best_destination_label = best.get("destination_label")
+    elif best.get("destination"):
+        best_destination_label = airport_label(best.get("destination"))
+    else:
+        best_destination_label = ""
     status_line = f"목표가 충족 ({diff:,}원 여유)" if diff >= 0 else f"목표가 초과 ({abs(diff):,}원 초과)"
     best_destination_line = f"\n- 최적 목적지: {best_destination_label}" if best_destination_label else ""
-    airline_line = f"\n- 항공사: {best.get('airline')}" if best.get("airline") else ""
-    time_line = ""
-    if best.get("departure_time") and best.get("arrival_time"):
-        time_line = f"\n- 시간: {best['departure_time']} → {best['arrival_time']}"
+    outbound_airline = best.get("airline") or ""
+    return_airline = best.get("return_airline") or ""
+    airline_bits = []
+    if outbound_airline and return_airline:
+        airline_bits.append(f"\n- 가는편 항공사: {outbound_airline}")
+        airline_bits.append(f"\n- 오는편 항공사: {return_airline}")
+    elif outbound_airline:
+        airline_bits.append(f"\n- 항공사: {outbound_airline}")
+    airline_line = "".join(airline_bits)
+    outbound_departure = best.get("departure_time") or ""
+    outbound_arrival = best.get("arrival_time") or ""
+    return_departure = best.get("return_departure_time") or ""
+    return_arrival = best.get("return_arrival_time") or ""
+    time_bits = []
+    if outbound_departure or outbound_arrival:
+        time_bits.append(
+            f"\n- 가는편 시간: {outbound_departure or '시간 정보 없음'}"
+            f"{f' → {outbound_arrival}' if outbound_arrival else ''}"
+        )
+    if return_departure or return_arrival:
+        time_bits.append(
+            f"\n- 오는편 시간: {return_departure or '시간 정보 없음'}"
+            f"{f' → {return_arrival}' if return_arrival else ''}"
+        )
+    time_line = "".join(time_bits)
     return {
         "rule_id": rule["id"],
         "label": rule["label"],
@@ -347,6 +408,9 @@ def build_notification_context(rule: dict[str, Any], result: dict[str, Any]) -> 
         "airline": best.get("airline") or "",
         "departure_time": best.get("departure_time") or "",
         "arrival_time": best.get("arrival_time") or "",
+        "return_airline": return_airline,
+        "return_departure_time": return_departure,
+        "return_arrival_time": return_arrival,
         "search_type": result.get("search_type") or "",
         "status_line": status_line,
         "best_destination_line": best_destination_line,
@@ -367,6 +431,9 @@ def compute_dedupe_key(rule: dict[str, Any], result: dict[str, Any]) -> str:
         "airline": best.get("airline"),
         "departure_time": best.get("departure_time"),
         "arrival_time": best.get("arrival_time"),
+        "return_airline": best.get("return_airline"),
+        "return_departure_time": best.get("return_departure_time"),
+        "return_arrival_time": best.get("return_arrival_time"),
     }
     return canonical_signature(payload)
 
@@ -420,7 +487,7 @@ def command_check(args) -> int:
             continue
         checked += 1
         try:
-            result = check_rule(rule)
+            result = check_rule(rule, repo_path=getattr(args, "repo_path", None))
             rule["last_checked_at"] = now_iso()
             rule["last_result"] = result
             if result["matched"]:
@@ -486,6 +553,7 @@ def command_render(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="대한민국 국내선 가격 감시 규칙 저장/점검 도구")
     parser.add_argument("--store", default=str(DEFAULT_STORE), help="규칙 JSON 저장 파일 경로")
+    parser.add_argument("--repo-path", help="upstream Scraping-flight-information 저장소 경로 override")
     sub = parser.add_subparsers(dest="command", required=True)
 
     add = sub.add_parser("add", help="감시 규칙 추가")

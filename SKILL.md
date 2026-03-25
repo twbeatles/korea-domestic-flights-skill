@@ -42,6 +42,12 @@ This skill wraps the local project clone at:
 
 - `tmp/Scraping-flight-information`
 
+Search path priority:
+- `--repo-path`
+- `KDF_SOURCE_REPO`
+- current repo / parent folders under `tmp/Scraping-flight-information`
+- current repo / parent folders under `Scraping-flight-information`
+
 Main reused entry points:
 - `scraping.searcher.FlightSearcher`
 - `scraping.parallel.ParallelSearcher`
@@ -53,61 +59,61 @@ If the clone or its dependencies are missing, searches will fail.
 ### 1) Single-route domestic search
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_domestic.py --origin 김포 --destination 제주 --departure 내일 --human
+python scripts/search_domestic.py --origin 김포 --destination 제주 --departure 내일 --human
 ```
 
 시간 조건 포함:
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_domestic.py --origin 김포 --destination 제주 --departure 내일 --time-pref "출발 10시 이후" --prefer late --human
+python scripts/search_domestic.py --origin 김포 --destination 제주 --departure 내일 --time-pref "출발 10시 이후" --prefer late --human
 ```
 
 Round trip:
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_domestic.py --origin GMP --destination CJU --departure 2026-03-25 --return-date 2026-03-28 --human
+python scripts/search_domestic.py --origin GMP --destination CJU --departure 2026-03-25 --return-date 2026-03-28 --human
 ```
 
 ### 2) Date-range cheapest-day search
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_date_range.py --origin 김포 --destination 제주 --date-range "내일부터 3일" --human
+python scripts/search_date_range.py --origin 김포 --destination 제주 --date-range "내일부터 3일" --human
 ```
 
 Explicit range:
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_date_range.py --origin 김포 --destination 제주 --start-date 내일 --end-date 2026-03-30 --human
+python scripts/search_date_range.py --origin 김포 --destination 제주 --start-date 내일 --end-date 2026-03-30 --human
 ```
 
 Round-trip-style date scan with fixed return offset:
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_date_range.py --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --time-pref "복귀 18시 이후" --human
+python scripts/search_date_range.py --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --time-pref "복귀 18시 이후" --human
 ```
 
 ### 3) Multi-destination comparison
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_multi_destination.py --origin 김포 --destinations 제주,부산,여수 --departure 내일 --human
+python scripts/search_multi_destination.py --origin 김포 --destinations 제주,부산,여수 --departure 내일 --human
 ```
 
 Round trip comparison:
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_multi_destination.py --origin GMP --destinations CJU,PUS,RSU --departure 2026-03-25 --return-date 2026-03-28 --human
+python scripts/search_multi_destination.py --origin GMP --destinations CJU,PUS,RSU --departure 2026-03-25 --return-date 2026-03-28 --human
 ```
 
 ### 4) Multi-destination + date-range best-combo search
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_destination_date_matrix.py --origin 김포 --destinations 제주,부산 --date-range "내일부터 2일" --human
+python scripts/search_destination_date_matrix.py --origin 김포 --destinations 제주,부산 --date-range "내일부터 2일" --human
 ```
 
 Round-trip offset scan across destinations:
 
 ```bash
-python skills/korea-domestic-flights/scripts/search_destination_date_matrix.py --origin 김포 --destinations 제주,부산 --date-range "다음주말" --return-offset 2 --human
+python scripts/search_destination_date_matrix.py --origin 김포 --destinations 제주,부산 --date-range "다음주말" --return-offset 2 --human
 ```
 
 ### 5) Chat-friendly wrapper
@@ -117,19 +123,19 @@ Use this first when the user is chatting naturally and you want the easiest invo
 Single route:
 
 ```bash
-python skills/korea-domestic-flights/scripts/chat_search.py --origin 김포 --destination 제주 --when 내일
+python scripts/chat_search.py --origin 김포 --destination 제주 --when 내일
 ```
 
 Date range:
 
 ```bash
-python skills/korea-domestic-flights/scripts/chat_search.py --origin 김포 --destination 제주 --when "내일부터 3일"
+python scripts/chat_search.py --origin 김포 --destination 제주 --when "내일부터 3일"
 ```
 
 Multi-destination + range:
 
 ```bash
-python skills/korea-domestic-flights/scripts/chat_search.py --origin 김포 --destinations 제주,부산 --when "내일부터 2일" --return-offset 1 --time-pref "출발 10시 이후, 늦은 시간 선호"
+python scripts/chat_search.py --origin 김포 --destinations 제주,부산 --when "내일부터 2일" --return-offset 1 --time-pref "출발 10시 이후, 늦은 시간 선호"
 ```
 
 Add `--json` when structured output is needed; otherwise it defaults to a human-readable Korean briefing.
@@ -139,19 +145,25 @@ Add `--json` when structured output is needed; otherwise it defaults to a human-
 Fixture-based regression/smoke check:
 
 ```bash
-python skills/korea-domestic-flights/scripts/hybrid_smoke_check.py
+python scripts/hybrid_smoke_check.py
 ```
 
 Shallow environment-only check:
 
 ```bash
-python skills/korea-domestic-flights/scripts/hybrid_live_dry_run.py
+python scripts/hybrid_live_dry_run.py
 ```
 
 Optional shallow live probe (non-brittle, no fare assertion):
 
 ```bash
-python skills/korea-domestic-flights/scripts/hybrid_live_dry_run.py --probe
+python scripts/hybrid_live_dry_run.py --probe
+```
+
+Local regression smoke check for helper logic:
+
+```bash
+python scripts/regression_smoke_check.py
 ```
 
 ### 6) Price alert / watch rules
@@ -159,55 +171,55 @@ python skills/korea-domestic-flights/scripts/hybrid_live_dry_run.py --probe
 Store a single-date alert:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destination 제주 --departure 내일 --target-price 70000 --label "김포-제주 내일 특가"
+python scripts/price_alerts.py add --origin 김포 --destination 제주 --departure 내일 --target-price 70000 --label "김포-제주 내일 특가"
 ```
 
 Store a date-range alert:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "내일부터 3일" --target-price 80000 --label "김포-제주 3일 범위 감시"
+python scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "내일부터 3일" --target-price 80000 --label "김포-제주 3일 범위 감시"
 ```
 
 Store a time-filtered alert:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --target-price 150000 --time-pref "복귀 18시 이후, 늦은 시간 선호" --label "주말 늦복 왕복 감시"
+python scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --target-price 150000 --time-pref "복귀 18시 이후, 늦은 시간 선호" --label "주말 늦복 왕복 감시"
 ```
 
 Store a multi-destination watch:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destinations 제주,부산,여수 --departure 내일 --target-price 90000 --label "김포 출발 내일 다중 목적지 감시"
+python scripts/price_alerts.py add --origin 김포 --destinations 제주,부산,여수 --departure 내일 --target-price 90000 --label "김포 출발 내일 다중 목적지 감시"
 ```
 
 Store a round-trip range alert with fixed return offset:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --target-price 150000 --label "주말 왕복 특가"
+python scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --target-price 150000 --label "주말 왕복 특가"
 ```
 
 Store a custom message format:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py add --origin 김포 --destinations 제주,부산 --date-range "내일부터 3일" --target-price 85000 --message-template "[특가감시] {best_destination_label} {departure_date} {observed_price} / 기준 {target_price}"
+python scripts/price_alerts.py add --origin 김포 --destinations 제주,부산 --date-range "내일부터 3일" --target-price 85000 --message-template "[특가감시] {best_destination_label} {departure_date} {observed_price} / 기준 {target_price}"
 ```
 
 Check all active rules:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py check
+python scripts/price_alerts.py check
 ```
 
 List saved rules:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py list
+python scripts/price_alerts.py list
 ```
 
 Remove a rule:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py remove --rule-id kdf-1234abcd
+python scripts/price_alerts.py remove --rule-id kdf-1234abcd
 ```
 
 When a rule matches, `check` prints a human-readable Korean alert message to stdout so an upper-layer cron/briefing flow can forward it directly.
@@ -239,6 +251,7 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
 - `--time-pref`, `--depart-after`, `--return-after`, `--exclude-early-before`, `--prefer`: 시간 필터/시간 선호 추천
 - 시간 조건이 있으면 전체 날짜를 병렬로 빠르게 훑은 뒤 저가 후보·인접 날짜·범위 커버리지 앵커를 함께 상세 재검증하는 하이브리드 모드로 전환됨
 - 상세 재검증 후 시간 조건 일치 결과가 너무 적거나, 시간조건 탈락/빈결과 유사 패턴이 강하면 fallback 후보 확장을 한 번 더 수행할 수 있음
+- 추천/상위 날짜는 시간 조건이 있을 때 **상세 검증 + 시간 조건 통과 결과만** 기준으로 잡고, `broad_only` 후보는 참고용으로만 노출됨
 - `summary.search_metadata` / 최상위 `search_metadata` / `logs` 에 하이브리드 여부, 전체 스캔 수, 초기/추가 재검증 수, fallback 여부, 시간 조건 요약과 `refine_diagnostics`(시간조건 탈락 / usable match 없음 / 빠른스캔-상세 불일치 빈결과 / 출발·복귀 시간정보 부족 / 가격정보 부족 분류, 샘플, user/developer 힌트, `ranked_reasons`, `dominant_reason_code`, `primary_interpretation`)가 기록됨
 - fallback 판단 요약은 `fallback_decision` / `fallback_reason_codes` 에 구조화되어 남음
 - 결과 요약에는 날짜별 가격 캘린더/히트맵(`summary.price_calendar`)이 포함됨
@@ -265,6 +278,7 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
 - `--time-pref`, `--depart-after`, `--return-after`, `--exclude-early-before`, `--prefer`: 시간 필터/시간 선호 추천
 - 시간 조건이 있으면 전체 조합을 목적지별 병렬 스캔으로 먼저 좁힌 뒤 저가 조합·목적지별 후보·인접 날짜 조합·커버리지 앵커를 함께 상세 재검증하는 하이브리드 모드로 전환됨
 - 상세 재검증 후 시간 조건 일치 조합이 너무 적거나, 시간조건 탈락/빈결과 유사 패턴이 강하면 fallback 후보 확장을 한 번 더 수행할 수 있음
+- 추천/상위 조합은 시간 조건이 있을 때 **상세 검증 + 시간 조건 통과 결과만** 기준으로 잡고, `broad_only` 후보는 참고용으로만 노출됨
 - `summary.search_metadata` / 최상위 `search_metadata` / `logs` 에 하이브리드 여부, 전체 스캔 수, 초기/추가 재검증 수, fallback 여부, 시간 조건 요약과 `refine_diagnostics`(시간조건 탈락 / usable match 없음 / scraper-empty 유사 분류 / 시간·가격 정보 완전누락·부분누락, 샘플, `human_hint`/`developer_hint`, `extraction_summary`, `ranked_reasons`, `dominant_reason_code`, `primary_interpretation`)가 기록됨
 - fallback 판단 요약은 `fallback_decision` / `fallback_reason_codes` 에 구조화되어 남음
 - `--human`: 전체 최적 조합 + 목적지별 베스트 브리핑 출력
@@ -276,7 +290,7 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
 - `--when`: 자연어 날짜/날짜범위
 - `--departure`: 명시적 출발일
 - `--return-date`: 명시적 귀국일
-- `--return-offset`: 날짜범위 왕복 오프셋. `chat_search.py`에서는 다중 목적지 + 명시적 `--departure` 와 함께 써도 단일일 매트릭스 왕복 탐색으로 라우팅됨
+- `--return-offset`: 날짜범위 왕복 오프셋. `chat_search.py`에서는 다중 목적지 + 명시적 `--departure` 와 함께 쓰면 단일일 매트릭스 왕복 탐색으로, 단일 목적지 + 동일 조합이면 1일 범위 검색으로 라우팅됨
 - `--time-pref`: 자연어 시간 선호/필터 입력
 - `--depart-after`, `--return-after`, `--exclude-early-before`, `--prefer`: 옵션 기반 시간 필터
 - `--json`: JSON 출력, 생략 시 사람이 읽기 쉬운 브리핑 출력
@@ -295,7 +309,10 @@ When a rule matches, `check` prints a human-readable Korean alert message to std
   - `--label`: 사람이 읽을 이름
   - `--time-pref`, `--depart-after`, `--return-after`, `--exclude-early-before`, `--prefer`: 시간대 조건/선호 저장
   - `--message-template`: 커스텀 알림 포맷
+  - `--repo-path`: upstream 저장소 경로를 규칙에 함께 저장
   - `--store`: 저장 파일 경로 오버라이드
+  - `--departure + --return-offset` 조합은 내부적으로 1일 범위 감시로 저장됨
+  - `--return-date` 와 `--return-offset` 은 함께 사용할 수 없음
   - 동일 조건+목표가 규칙은 fingerprint 기준으로 중복 저장되지 않음
 - `list`: 저장된 규칙 목록 출력
 - `check`: 활성 규칙 점검, 목표가 충족 시 한국어 알림 출력
@@ -315,5 +332,7 @@ Read these only when needed:
 - This skill depends on a working Playwright browser environment.
 - If browser init fails, install or repair Chromium/Chrome/Edge in the source repo environment.
 - The provider site DOM may change; if results suddenly disappear, the upstream scraper may need maintenance.
+- Natural-language dates and stored timestamps are interpreted in `Asia/Seoul`.
+- `price_alerts.py check` runs child search scripts in UTF-8 mode for Windows console safety.
 - For stable chat use, prefer `chat_search.py` or `--human` summaries unless structured JSON is explicitly needed.
 - Prefer domestic routes only; if the user asks for ICN-NRT or any overseas route, do not use this skill.

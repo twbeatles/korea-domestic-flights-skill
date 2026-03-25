@@ -15,6 +15,8 @@ from common_cli import (
     build_best_option_reasons,
     cabin_label,
     bullet_rank_lines,
+    close_safely,
+    emit_json,
     explain_recommendation,
     filter_and_rank_by_time_preference,
     format_price,
@@ -25,8 +27,10 @@ from common_cli import (
     parse_time_preference_args,
     pretty_date,
     recommendation_line,
+    resolve_source_repo,
     time_preference_recommendation,
     unique_codes,
+    verify_date_order,
 )
 
 
@@ -52,12 +56,13 @@ def main():
     parser.add_argument("--exclude-early-before")
     parser.add_argument("--prefer", choices=["late", "morning", "afternoon", "evening"])
     parser.add_argument("--human", action="store_true")
+    parser.add_argument("--repo-path", help="upstream Scraping-flight-information 저장소 경로")
     args = parser.parse_args()
 
-    workspace = Path(__file__).resolve().parents[3]
-    repo_path = workspace / "tmp" / "Scraping-flight-information"
-    if not repo_path.exists():
-        print(json.dumps({"status": "error", "message": "Source repository clone not found.", "expected": str(repo_path)}, ensure_ascii=False, indent=2))
+    try:
+        repo_path = resolve_source_repo(script_path=__file__, repo_path=args.repo_path)
+    except FileNotFoundError as exc:
+        emit_json({"status": "error", "message": "Source repository clone not found.", "details": str(exc)})
         sys.exit(1)
 
     sys.path.insert(0, str(repo_path))
@@ -65,7 +70,7 @@ def main():
     try:
         from scraping.parallel import ParallelSearcher
     except Exception as exc:
-        print(json.dumps({"status": "error", "message": "Failed to import parallel searcher.", "details": str(exc)}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": "Failed to import parallel searcher.", "details": str(exc)})
         sys.exit(1)
 
     try:
@@ -73,8 +78,9 @@ def main():
         destinations = unique_codes([normalize_airport(x.strip()) for x in args.destinations.split(",") if x.strip()])
         departure = pretty_date(parse_flexible_date(args.departure))
         return_date = pretty_date(parse_flexible_date(args.return_date)) if args.return_date else None
+        verify_date_order(departure, return_date)
     except ValueError as exc:
-        print(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": str(exc)})
         sys.exit(1)
 
     time_pref = parse_time_preference_args(args)
@@ -85,15 +91,18 @@ def main():
         logs.append(str(msg))
 
     searcher = ParallelSearcher()
-    raw = searcher.search_multiple_destinations(
-        origin=origin,
-        destinations=destinations,
-        departure_date=departure.replace("-", ""),
-        return_date=return_date.replace("-", "") if return_date else None,
-        adults=args.adults,
-        cabin_class=args.cabin,
-        progress_callback=progress,
-    )
+    try:
+        raw = searcher.search_multiple_destinations(
+            origin=origin,
+            destinations=destinations,
+            departure_date=departure.replace("-", ""),
+            return_date=return_date.replace("-", "") if return_date else None,
+            adults=args.adults,
+            cabin_class=args.cabin,
+            progress_callback=progress,
+        )
+    finally:
+        close_safely(searcher)
 
     normalized = []
     for dest in destinations:
@@ -104,12 +113,18 @@ def main():
         normalized.append({
             "destination": dest,
             "destination_label": airport_label(dest),
+            "departure_date": departure,
+            "return_date": return_date,
             "count": len(filtered),
             "raw_count": len(raw_results),
             "cheapest_price": cheapest.get("price", 0) if cheapest else 0,
+            "price": cheapest.get("price", 0) if cheapest else 0,
             "airline": cheapest.get("airline", "") if cheapest else "",
             "departure_time": cheapest.get("departure_time", "") if cheapest else "",
             "arrival_time": cheapest.get("arrival_time", "") if cheapest else "",
+            "return_airline": cheapest.get("return_airline", "") if cheapest else "",
+            "return_departure_time": cheapest.get("return_departure_time", "") if cheapest else "",
+            "return_arrival_time": cheapest.get("return_arrival_time", "") if cheapest else "",
             "preferred_price": preferred.get("price", 0) if preferred else 0,
             "preferred_airline": preferred.get("airline", "") if preferred else "",
             "preferred_departure_time": preferred.get("departure_time", "") if preferred else "",
@@ -135,24 +150,26 @@ def main():
             best["destination_label"],
             int(best["cheapest_price"] or 0),
             second_price,
-            build_best_option_reasons({
-                "airline": best.get("airline"),
-                "departure_time": best.get("departure_time"),
-                "arrival_time": best.get("arrival_time"),
-                "cheapest_price": best.get("cheapest_price"),
-                "price": best.get("cheapest_price"),
-            }, second_price, time_pref),
+            build_best_option_reasons(best, second_price, time_pref),
         ) if best else None,
     }
 
     if args.human:
         def destination_detail(item):
-            return join_nonempty([
-                item.get('airline') or None,
+            time_bits = [
                 join_nonempty([
                     format_time_or_fallback(item.get('departure_time')) if item.get('departure_time') else None,
                     item.get('arrival_time') or None,
                 ], '→'),
+            ]
+            if item.get("return_date"):
+                time_bits.append(join_nonempty([
+                    format_time_or_fallback(item.get('return_departure_time')) if item.get('return_departure_time') else None,
+                    item.get('return_arrival_time') or None,
+                ], '→'))
+            return join_nonempty([
+                item.get('airline') or None,
+                join_nonempty([bit for bit in time_bits if bit], " / "),
             ])
 
         lines = [summary["headline"]]
@@ -177,7 +194,7 @@ def main():
         print("\n".join(lines))
         return
 
-    print(json.dumps({
+    emit_json({
         "status": "success",
         "query": {
             "origin": origin,
@@ -191,7 +208,7 @@ def main():
         "summary": summary,
         "results": ranked,
         "logs": logs,
-    }, ensure_ascii=False, indent=2))
+    })
 
 
 if __name__ == "__main__":

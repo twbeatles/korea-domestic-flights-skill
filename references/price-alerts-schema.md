@@ -1,6 +1,6 @@
 # 가격 감시 JSON 포맷
 
-이 스킬의 가격 감시 기능은 기본적으로 `skills/korea-domestic-flights/price-alert-rules.json` 파일을 사용한다.
+이 스킬의 가격 감시 기능은 기본적으로 스킬 루트의 `price-alert-rules.json` 파일을 사용한다.
 
 OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
 
@@ -39,7 +39,8 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
         "return_offset": 0,
         "adults": 1,
         "cabin": "ECONOMY",
-        "trip_type": "one_way"
+        "trip_type": "one_way",
+        "source_repo_path": "C:/work/tmp/Scraping-flight-information"
       },
       "target_price_krw": 70000,
       "created_at": "2026-03-19T18:35:00+09:00",
@@ -87,6 +88,7 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
 - `rules[].query.departure`, `return_date`: 단일 날짜 감시용
 - `rules[].query.date_range`: 날짜 범위 감시용
 - `rules[].query.return_offset`: 날짜 범위 왕복 감시에서 귀국일 오프셋
+- `rules[].query.source_repo_path`: 필요할 때 upstream 저장소를 명시적으로 지정하는 절대 경로
 - `rules[].query.adults`, `cabin`: 검색 조건
 - `rules[].target_price_krw`: 목표가
 - `rules[].last_result`: 마지막 점검 결과 캐시
@@ -103,6 +105,12 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
 - 날짜 범위 감시는 `search_destination_date_matrix.py`
 - 알림은 **가장 저렴한 목적지/날짜 조합 1건** 기준으로 발생한다.
 
+## 단일 날짜 + return-offset 동작
+
+- `add --departure 2026-03-25 --return-offset 2` 처럼 입력하면 내부적으로 `2026-03-25~2026-03-25` 1일 범위 감시로 저장한다.
+- 즉, 단일 날짜 왕복 오프셋 감시도 `search_date_range.py` 기반으로 일관되게 점검된다.
+- `--return-date` 와 `--return-offset` 은 함께 저장할 수 없다.
+
 ## 중복 방지 동작
 
 ### 1) 규칙 저장 단계 dedupe
@@ -118,13 +126,13 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
 - 관측 최저가
 - 최적 목적지
 - 출발일/귀국일
-- 항공사
-- 출발/도착 시각
+- 가는편 항공사/출발/도착 시각
+- 오는편 항공사/출발/도착 시각
 
 강제로 다시 출력하려면:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py check --no-dedupe
+python scripts/price_alerts.py check --no-dedupe
 ```
 
 ## 메시지 템플릿 변수
@@ -145,13 +153,15 @@ python skills/korea-domestic-flights/scripts/price_alerts.py check --no-dedupe
 - `{date_text}`
 - `{airline}`
 - `{departure_time}` / `{arrival_time}`
+- `{return_airline}`
+- `{return_departure_time}` / `{return_arrival_time}`
 - `{cabin_label}`
 - `{status_line}`
 
 예시:
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py add \
+python scripts/price_alerts.py add \
   --origin 김포 \
   --destinations 제주,부산 \
   --date-range "내일부터 3일" \
@@ -164,7 +174,7 @@ python skills/korea-domestic-flights/scripts/price_alerts.py add \
 정기 점검에서 다음처럼 실행하면 된다.
 
 ```bash
-python skills/korea-domestic-flights/scripts/price_alerts.py check
+python scripts/price_alerts.py check
 ```
 
 동작 방식:
@@ -180,9 +190,10 @@ python skills/korea-domestic-flights/scripts/price_alerts.py check
 Windows 환경에서는 다음 스크립트 초안을 사용할 수 있다.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File skills/korea-domestic-flights/scripts/register_price_alerts_task.ps1 -IntervalMinutes 30
+powershell -ExecutionPolicy Bypass -File scripts/register_price_alerts_task.ps1 -IntervalMinutes 30
 ```
 
 주의:
 - 이 스크립트는 **작업 등록만** 돕는다.
+- standalone 저장소와 skill-layout 둘 다 찾도록 작성되어 있지만, upstream 저장소 위치가 표준 경로가 아니면 `-SourceRepoPath` 또는 `--repo-path` 를 함께 지정하는 편이 안전하다.
 - 실제 알림 전송은 상위 OpenClaw cron/브리핑 파이프가 stdout 을 받아 전달하는 방식으로 연결해야 한다.

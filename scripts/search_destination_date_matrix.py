@@ -18,7 +18,9 @@ from common_cli import (
     build_best_option_reasons,
     build_price_calendar,
     cabin_label,
+    close_safely,
     choose_balanced_round_trip_option,
+    emit_json,
     explain_recommendation,
     filter_and_rank_by_time_preference,
     format_price,
@@ -30,8 +32,12 @@ from common_cli import (
     parse_time_preference_args,
     pretty_date,
     recommendation_line,
+    resolve_source_repo,
     round_trip_balance_recommendation,
+    unverified_broad_rows,
     unique_codes,
+    verified_priced_rows,
+    verify_return_offset,
 )
 from hybrid_observability import build_refine_diagnostics, choose_fallback_plan
 
@@ -62,7 +68,10 @@ def _broad_row(destination, dep, ret, price=0, airline=""):
         "price": price,
         "airline": airline,
         "departure_time": "",
+        "arrival_time": "",
+        "return_airline": "",
         "return_departure_time": "",
+        "return_arrival_time": "",
         "preferred_option": None,
         "search_stage": "broad_only",
         "time_pref_match": None,
@@ -278,7 +287,10 @@ def _refine_combo(searcher, origin, row, args, time_pref, logs, stage, broad_pri
         "price": cheapest.get("price", 0) if cheapest else 0,
         "airline": cheapest.get("airline", "") if cheapest else "",
         "departure_time": cheapest.get("departure_time", "") if cheapest else "",
+        "arrival_time": cheapest.get("arrival_time", "") if cheapest else "",
+        "return_airline": cheapest.get("return_airline", "") if cheapest else "",
         "return_departure_time": cheapest.get("return_departure_time", "") if cheapest else "",
+        "return_arrival_time": cheapest.get("return_arrival_time", "") if cheapest else "",
         "preferred_option": preferred_ranked[0] if preferred_ranked else None,
         "search_stage": stage,
         "time_pref_match": bool(cheapest),
@@ -310,6 +322,7 @@ def main():
     parser.add_argument("--exclude-early-before")
     parser.add_argument("--prefer", choices=["late", "morning", "afternoon", "evening"])
     parser.add_argument("--human", action="store_true")
+    parser.add_argument("--repo-path", help="upstream Scraping-flight-information 저장소 경로")
     args = parser.parse_args()
 
     try:
@@ -322,23 +335,24 @@ def main():
             end_dt = parse_flexible_date(args.end_date)
         else:
             raise ValueError("start/end-date 또는 --date-range 중 하나를 제공해야 합니다.")
+        verify_return_offset(args.return_offset)
     except ValueError as exc:
-        print(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": str(exc)})
         sys.exit(1)
 
     if end_dt < start_dt:
-        print(json.dumps({"status": "error", "message": "end-date must be after or equal to start-date"}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": "end-date must be after or equal to start-date"})
         sys.exit(1)
 
     dates = build_dates(start_dt, end_dt)
     if len(dates) * len(destinations) > 90:
-        print(json.dumps({"status": "error", "message": "검색 조합 수는 90개 이하로 제한됩니다."}, ensure_ascii=False, indent=2))
+        emit_json({"status": "error", "message": "검색 조합 수는 90개 이하로 제한됩니다."})
         sys.exit(1)
 
-    workspace = Path(__file__).resolve().parents[3]
-    repo_path = workspace / "tmp" / "Scraping-flight-information"
-    if not repo_path.exists():
-        print(json.dumps({"status": "error", "message": "Source repository clone not found.", "expected": str(repo_path)}, ensure_ascii=False, indent=2))
+    try:
+        repo_path = resolve_source_repo(script_path=__file__, repo_path=args.repo_path)
+    except FileNotFoundError as exc:
+        emit_json({"status": "error", "message": "Source repository clone not found.", "details": str(exc)})
         sys.exit(1)
 
     sys.path.insert(0, str(repo_path))
@@ -377,33 +391,36 @@ def main():
             from scraping.parallel import ParallelSearcher
             from scraping.searcher import FlightSearcher
         except Exception as exc:
-            print(json.dumps({"status": "error", "message": "Failed to import hybrid search components.", "details": str(exc)}, ensure_ascii=False, indent=2))
+            emit_json({"status": "error", "message": "Failed to import hybrid search components.", "details": str(exc)})
             sys.exit(1)
 
         search_metadata["strategy"] = "hybrid_parallel_then_detailed"
         broad_rows = []
         parallel_searcher = ParallelSearcher()
-        for destination in destinations:
-            logs.append(f"[broad] matrix search start: {destination}")
-            raw = parallel_searcher.search_date_range(
-                origin=origin,
-                destination=destination,
-                dates=[d.strftime("%Y%m%d") for d in dates],
-                return_offset=args.return_offset,
-                adults=args.adults,
-                cabin_class=args.cabin,
-                progress_callback=lambda msg, dest=destination: logs.append(f"[broad {dest}] {msg}"),
-            )
-            for d in dates:
-                key = d.strftime("%Y%m%d")
-                price, airline = raw.get(key, (0, "N/A"))
-                broad_rows.append(_broad_row(
+        try:
+            for destination in destinations:
+                logs.append(f"[broad] matrix search start: {destination}")
+                raw = parallel_searcher.search_date_range(
+                    origin=origin,
                     destination=destination,
-                    dep=pretty_date(d),
-                    ret=pretty_date(d + timedelta(days=args.return_offset)) if args.return_offset > 0 else None,
-                    price=price,
-                    airline=airline,
-                ))
+                    dates=[d.strftime("%Y%m%d") for d in dates],
+                    return_offset=args.return_offset,
+                    adults=args.adults,
+                    cabin_class=args.cabin,
+                    progress_callback=lambda msg, dest=destination: logs.append(f"[broad {dest}] {msg}"),
+                )
+                for d in dates:
+                    key = d.strftime("%Y%m%d")
+                    price, airline = raw.get(key, (0, "N/A"))
+                    broad_rows.append(_broad_row(
+                        destination=destination,
+                        dep=pretty_date(d),
+                        ret=pretty_date(d + timedelta(days=args.return_offset)) if args.return_offset > 0 else None,
+                        price=price,
+                        airline=airline,
+                    ))
+        finally:
+            close_safely(parallel_searcher)
 
         search_metadata["broad_scan_available"] = len([row for row in broad_rows if row["price"] and row["price"] > 0])
         refine_rows = _choose_refine_combos(destinations, dates, broad_rows)
@@ -473,10 +490,7 @@ def main():
                     search_metadata["developer_diagnostic_hint"] = diagnostics.get("developer_hint")
                     logs.append(f"hybrid refine diagnostics (after fallback): {diagnostics['summary_text']}")
         finally:
-            try:
-                searcher.close()
-            except Exception:
-                pass
+            close_safely(searcher)
 
         all_rows = []
         for row in broad_rows:
@@ -500,58 +514,79 @@ def main():
         try:
             from scraping.parallel import ParallelSearcher
         except Exception as exc:
-            print(json.dumps({"status": "error", "message": "Failed to import parallel searcher.", "details": str(exc)}, ensure_ascii=False, indent=2))
+            emit_json({"status": "error", "message": "Failed to import parallel searcher.", "details": str(exc)})
             sys.exit(1)
         searcher = ParallelSearcher()
-        for destination in destinations:
-            logs.append(f"matrix search start: {destination}")
-            raw = searcher.search_date_range(
-                origin=origin,
-                destination=destination,
-                dates=[d.strftime("%Y%m%d") for d in dates],
-                return_offset=args.return_offset,
-                adults=args.adults,
-                cabin_class=args.cabin,
-                progress_callback=lambda msg, dest=destination: logs.append(f"[{dest}] {msg}"),
-            )
-            rows = []
-            for d in dates:
-                key = d.strftime("%Y%m%d")
-                price, airline = raw.get(key, (0, "N/A"))
-                row = {
+        try:
+            for destination in destinations:
+                logs.append(f"matrix search start: {destination}")
+                raw = searcher.search_date_range(
+                    origin=origin,
+                    destination=destination,
+                    dates=[d.strftime("%Y%m%d") for d in dates],
+                    return_offset=args.return_offset,
+                    adults=args.adults,
+                    cabin_class=args.cabin,
+                    progress_callback=lambda msg, dest=destination: logs.append(f"[{dest}] {msg}"),
+                )
+                rows = []
+                for d in dates:
+                    key = d.strftime("%Y%m%d")
+                    price, airline = raw.get(key, (0, "N/A"))
+                    row = {
+                        "destination": destination,
+                        "destination_label": airport_label(destination),
+                        "departure_date": pretty_date(d),
+                        "return_date": pretty_date(d + timedelta(days=args.return_offset)) if args.return_offset > 0 else None,
+                        "price": price,
+                        "airline": airline,
+                        "departure_time": "",
+                        "arrival_time": "",
+                        "return_airline": "",
+                        "return_departure_time": "",
+                        "return_arrival_time": "",
+                        "preferred_option": None,
+                        "search_stage": "parallel",
+                        "time_pref_match": None,
+                        "raw_option_count": 0,
+                        "time_pref_valid_count": 0,
+                        "diagnostic_detail": {},
+                    }
+                    rows.append(row)
+                    combos.append(row)
+                available_rows = verified_priced_rows(rows, time_pref_active=False)
+                destination_rows.append({
                     "destination": destination,
                     "destination_label": airport_label(destination),
-                    "departure_date": pretty_date(d),
-                    "return_date": pretty_date(d + timedelta(days=args.return_offset)) if args.return_offset > 0 else None,
-                    "price": price,
-                    "airline": airline,
-                    "departure_time": "",
-                    "return_departure_time": "",
-                    "preferred_option": None,
-                    "search_stage": "parallel",
-                    "time_pref_match": None,
-                    "raw_option_count": 0,
-                    "time_pref_valid_count": 0,
-                    "diagnostic_detail": {},
-                }
-                rows.append(row)
-                combos.append(row)
-            available_rows = [row for row in rows if row["price"] and row["price"] > 0]
-            available_rows.sort(key=lambda x: x["price"])
-            destination_rows.append({
-                "destination": destination,
-                "destination_label": airport_label(destination),
-                "search_strategy": search_metadata["strategy"],
-                "best_option": available_rows[0] if available_rows else None,
-                "top_dates": available_rows[:3],
-                "price_calendar": build_price_calendar(rows, date_key="departure_date", price_key="price"),
-            })
+                    "search_strategy": search_metadata["strategy"],
+                    "best_option": available_rows[0] if available_rows else None,
+                    "top_dates": available_rows[:3],
+                    "price_calendar": build_price_calendar(rows, date_key="departure_date", price_key="price"),
+                })
+        finally:
+            close_safely(searcher)
         search_metadata["broad_scan_available"] = len([row for row in combos if row["price"] and row["price"] > 0])
 
-    ranked_combos = sorted([row for row in combos if row["price"] and row["price"] > 0], key=lambda x: x["price"])
+    ranked_combos = verified_priced_rows(combos, time_pref_active=time_pref.active())
+    unverified_candidates = unverified_broad_rows(combos) if time_pref.active() else []
+    search_metadata["verified_results_required"] = time_pref.active()
+    search_metadata["verified_result_count"] = len(ranked_combos)
+    search_metadata["unverified_broad_result_count"] = len(unverified_candidates)
+    search_metadata["unverified_candidates"] = [_candidate_detail(row) for row in unverified_candidates[:7]]
     best = ranked_combos[0] if ranked_combos else None
     balanced_combo = choose_balanced_round_trip_option(ranked_combos, time_pref) if args.return_offset > 0 else None
     second_price = ranked_combos[1]["price"] if len(ranked_combos) > 1 else None
+
+    if time_pref.active():
+        for item in destination_rows:
+            verified_top_dates = verified_priced_rows(item.get("top_dates", []) or [], time_pref_active=False)
+            item["best_option"] = verified_top_dates[0] if verified_top_dates else None
+            item["top_dates"] = verified_top_dates[:3]
+            rows = [row for row in combos if row["destination"] == item["destination"]]
+            verified_rows = verified_priced_rows(rows, time_pref_active=True)
+            item["best_option"] = verified_rows[0] if verified_rows else None
+            item["top_dates"] = verified_rows[:3]
+            item["unverified_candidates"] = unverified_broad_rows(rows)[:3]
 
     destination_rows.sort(key=lambda x: x["best_option"]["price"] if x["best_option"] else 10**12)
     summary = {
@@ -568,6 +603,7 @@ def main():
         "top_combos": ranked_combos[:7],
         "by_destination": destination_rows,
         "diagnostic_hint": search_metadata.get("diagnostic_hint"),
+        "unverified_candidates": unverified_candidates[:7],
         "recommendation": recommendation_line(
             f"{best['destination_label']} / {best['departure_date']}{f'~{best['return_date']}' if best and best['return_date'] else ''}",
             best["price"],
@@ -617,8 +653,11 @@ def main():
                 hybrid_text += f" + fallback {search_metadata['fallback_refined_combos']}조합"
             hybrid_text += ")"
             lines.append(hybrid_text)
+            lines.append("추천/상위 조합은 상세 검증과 시간 조건을 통과한 결과만 반영합니다.")
         if search_metadata.get("diagnostic_hint"):
             lines.append(f"참고: {search_metadata['diagnostic_hint']}")
+        if not best and unverified_candidates:
+            lines.append(f"참고: 빠른 스캔 저가 조합 {len(unverified_candidates)}건이 있었지만 상세 검증 통과 결과는 없습니다.")
 
         add_section(lines, "최저가", [
             f"최적 조합: {combo_text(best)}" if best else None,
@@ -630,6 +669,10 @@ def main():
             (f"{idx}. {item['destination_label']} · {combo_text(best_option).replace(item['destination_label'] + ' · ', '', 1)}" if best_option else f"{idx}. {item['destination_label']} · 결과 없음")
             for idx, item in enumerate(destination_rows[:5], start=1)
             for best_option in [item.get('best_option')]
+        ])
+        add_section(lines, "빠른 스캔 후보", [
+            f"{idx}. {combo_text(item)} (미검증 참고용)"
+            for idx, item in enumerate(summary.get("unverified_candidates", []), start=1)
         ])
         if destination_rows:
             calendar_lines = []
@@ -645,7 +688,7 @@ def main():
         print("\n".join(lines))
         return
 
-    print(json.dumps({
+    emit_json({
         "status": "success",
         "query": {
             "origin": origin,
@@ -662,7 +705,7 @@ def main():
         "matrix": destination_rows,
         "logs": logs,
         "search_metadata": search_metadata,
-    }, ensure_ascii=False, indent=2))
+    })
 
 
 if __name__ == "__main__":

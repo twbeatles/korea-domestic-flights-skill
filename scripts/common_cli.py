@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Iterable, List, Sequence
+from zoneinfo import ZoneInfo
+
+SEOUL_TIMEZONE = ZoneInfo("Asia/Seoul")
+SOURCE_REPO_DIRNAME = "Scraping-flight-information"
+SOURCE_REPO_ENV_VARS = ("KDF_SOURCE_REPO", "SCRAPING_FLIGHT_INFORMATION_REPO")
+WORKSPACE_ENV_VARS = ("KDF_WORKSPACE",)
 
 AIRPORT_NAMES = {
     "GMP": "김포",
@@ -104,8 +114,13 @@ def normalize_airport(value: str) -> str:
     raise ValueError(f"지원하지 않는 공항 입력입니다: {value}")
 
 
+def seoul_now() -> datetime:
+    return datetime.now(SEOUL_TIMEZONE)
+
+
 def _base_today() -> datetime:
-    return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    now = seoul_now()
+    return datetime(now.year, now.month, now.day)
 
 
 def _parse_month_day(raw: str, today: datetime) -> datetime | None:
@@ -313,6 +328,13 @@ def build_price_calendar(rows: Sequence[dict], date_key: str = "departure_date",
     calendar = []
     for item in rows:
         price = int(item.get(price_key, 0) or 0)
+        search_stage = str(item.get("search_stage") or "").strip()
+        verification_note = ""
+        verified = item.get("time_pref_match") is True or search_stage not in {"broad_only"}
+        if search_stage == "broad_only":
+            verification_note = " · 빠른 스캔(미검증)"
+        elif item.get("time_pref_match") is True:
+            verification_note = " · 상세 검증"
         if price <= 0:
             band = "unavailable"
             badge = "⚪"
@@ -334,7 +356,8 @@ def build_price_calendar(rows: Sequence[dict], date_key: str = "departure_date",
             "price": price,
             "band": band,
             "badge": badge,
-            "label": f"{item.get(date_key)} {badge} {format_price(price) if price > 0 else '결과 없음'} · {note}",
+            "verified": verified,
+            "label": f"{item.get(date_key)} {badge} {format_price(price) if price > 0 else '결과 없음'} · {note}{verification_note}",
         })
     return calendar
 
@@ -347,6 +370,107 @@ def unique_codes(values: Iterable[str]) -> list[str]:
             seen.add(value)
             output.append(value)
     return output
+
+
+def priced_rows(items: Sequence[dict]) -> list[dict]:
+    rows = [item for item in items if int(item.get("price", 0) or 0) > 0]
+    rows.sort(key=lambda x: int(x.get("price", 0) or 0))
+    return rows
+
+
+def verified_priced_rows(items: Sequence[dict], *, time_pref_active: bool) -> list[dict]:
+    if not time_pref_active:
+        return priced_rows(items)
+    rows = [item for item in items if int(item.get("price", 0) or 0) > 0 and item.get("time_pref_match") is True]
+    rows.sort(key=lambda x: int(x.get("price", 0) or 0))
+    return rows
+
+
+def unverified_broad_rows(items: Sequence[dict]) -> list[dict]:
+    rows = [
+        item for item in items
+        if int(item.get("price", 0) or 0) > 0 and str(item.get("search_stage") or "").strip() == "broad_only"
+    ]
+    rows.sort(key=lambda x: int(x.get("price", 0) or 0))
+    return rows
+
+
+def verify_date_order(departure: str, return_date: str | None = None) -> None:
+    if not return_date:
+        return
+    departure_dt = datetime.strptime(departure, "%Y-%m-%d")
+    return_dt = datetime.strptime(return_date, "%Y-%m-%d")
+    if return_dt < departure_dt:
+        raise ValueError("return-date 는 departure 와 같거나 이후여야 합니다.")
+
+
+def verify_return_offset(return_offset: int, *, allow_positive_without_range: bool = True) -> None:
+    if return_offset < 0:
+        raise ValueError("--return-offset 는 0 이상이어야 합니다.")
+    if return_offset > 0 and not allow_positive_without_range:
+        raise ValueError("--return-offset 는 날짜 범위 검색/감시에만 사용할 수 있습니다. 단일 날짜 왕복은 --return-date 를 사용하세요.")
+
+
+def close_safely(resource) -> None:
+    close_fn = getattr(resource, "close", None)
+    if callable(close_fn):
+        try:
+            close_fn()
+        except Exception:
+            pass
+
+
+def emit_json(payload: dict) -> None:
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    print(safe_text)
+
+
+def _unique_paths(paths: Iterable[Path]) -> list[Path]:
+    seen = set()
+    output = []
+    for path in paths:
+        normalized = str(path.resolve(strict=False)).lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        output.append(path)
+    return output
+
+
+def source_repo_candidates(script_path: str | Path | None = None, repo_path: str | Path | None = None) -> list[Path]:
+    if repo_path:
+        return [Path(repo_path).expanduser().resolve(strict=False)]
+
+    candidates: list[Path] = []
+    for env_var in SOURCE_REPO_ENV_VARS:
+        raw = os.environ.get(env_var)
+        if raw:
+            candidates.append(Path(raw).expanduser().resolve(strict=False))
+
+    repo_root = Path(script_path).resolve().parent.parent if script_path else Path(__file__).resolve().parent.parent
+    base_dirs: list[Path] = [repo_root]
+    for env_var in WORKSPACE_ENV_VARS:
+        raw = os.environ.get(env_var)
+        if raw:
+            base_dirs.append(Path(raw).expanduser().resolve(strict=False))
+    base_dirs.extend(repo_root.parents[:4])
+
+    for base in base_dirs:
+        candidates.append(base / "tmp" / SOURCE_REPO_DIRNAME)
+        candidates.append(base / SOURCE_REPO_DIRNAME)
+
+    return _unique_paths(candidates)
+
+
+def resolve_source_repo(script_path: str | Path | None = None, repo_path: str | Path | None = None) -> Path:
+    candidates = source_repo_candidates(script_path=script_path, repo_path=repo_path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    searched = "\n".join(f"- {candidate}" for candidate in candidates)
+    raise FileNotFoundError(f"Source repository clone not found. Searched:\n{searched}")
 
 
 def parse_time_to_minutes(value: str | None) -> int | None:
