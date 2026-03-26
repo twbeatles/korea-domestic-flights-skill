@@ -4,6 +4,18 @@
 
 이 스킬은 Playwright 기반 항공권 검색 흐름을 감싸서 다음 같은 작업을 처리합니다.
 
+---
+
+## OpenClaw에서 설치하기
+
+이 저장소는 **OpenClaw AgentSkill 리포지토리**입니다. 설치/연결할 때는 저장소 이름만 봐도 용도를 알아볼 수 있게 `openclaw-korea-domestic-flights` 이름을 사용합니다.
+
+일반적으로는 아래처럼 다룹니다.
+
+- 저장소: `twbeatles/openclaw-korea-domestic-flights`
+- 스킬 엔트리: `SKILL.md`
+- 사람이 바로 이해할 이름: **OpenClaw Skill: Korea Domestic Flights**
+
 - 김포-제주, 부산-제주 같은 **국내선 단일 노선 검색**
 - **왕복 검색** 및 시간대 조건 반영
 - **날짜 범위 최저가 탐색**
