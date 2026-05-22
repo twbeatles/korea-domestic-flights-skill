@@ -31,10 +31,12 @@
 - `다낭`, `danang` → `DAD`
 - `발리`, `bali` → `DPS`
 
-## 예시
+## CLI 예시
 
-- `python scripts/search_flights.py --origin ICN --destination NRT --departure 내일 --scope international --human`
-- `python scripts/search_flights.py --origin SEL --destination TYO --departure 내일 --human`
-- `python scripts/search_flights.py --origin ICN --destination KIX --departure 내일 --human`
-- `python scripts/search_date_range.py --origin ICN --destination KIX --date-range "다음주말" --scope international --human`
-- `python scripts/search_destination_date_matrix.py --origin ICN --destinations NRT,KIX,FUK --date-range "내일부터 3일" --scope international --human`
+- `korea-flights search --origin ICN --destination NRT --departure 내일 --scope international --human`
+- `korea-flights search --origin SEL --destination TYO --departure 내일 --human`
+- `korea-flights search --origin ICN --destination KIX --departure 내일 --human`
+- `korea-flights range --origin ICN --destination KIX --date-range "다음주말" --scope international --human`
+- `korea-flights matrix --origin ICN --destinations NRT,KIX,FUK --date-range "내일부터 3일" --scope international --human`
+
+기존 `scripts/search_flights.py`, `scripts/search_date_range.py`, `scripts/search_destination_date_matrix.py`는 호환용 forwarder로만 유지된다. 새 자동화와 문서는 `korea-flights` 패키지 CLI를 기준으로 작성한다.

@@ -1,198 +1,142 @@
-# OpenClaw Skill: Korea Flights
+# Korea Flights
 
-`openclaw-korea-domestic-flights`는 설치 호환성을 위해 기존 저장소 이름을 유지하지만, 현재는 **국내선 + 국제선 항공권 검색·비교·날짜 범위 탐색·가격 감시**를 지원하는 **OpenClaw AgentSkill 저장소**입니다.
+`openclaw-korea-domestic-flights` 저장소는 설치 호환성을 위해 기존 리포지토리 이름을 유지하지만, 현재 주 인터페이스는 **`korea-flights` Python 패키지형 OpenClaw 스킬**입니다.
 
-이 스킬은 Playwright 기반 항공권 검색 흐름을 감싸서 다음 같은 작업을 처리합니다.
+- 배포명: `korea-flights`
+- Python import: `korea_flights`
+- 콘솔 명령: `korea-flights`
+- legacy 저장소/설치 식별자: `openclaw-korea-domestic-flights`
+- 런타임 스크래핑 코어: 로컬 `Scraping-flight-information` 저장소 adapter
 
----
+이 저장소는 스크래핑 코어를 복사하지 않습니다. `D:\twbeatles-repos\Scraping-flight-information` 같은 로컬 Flight Bot 저장소를 찾아 `scraping.searcher.FlightSearcher`와 `scraping.parallel.ParallelSearcher`를 adapter로 감쌉니다.
 
-## OpenClaw에서 설치하기
+## 주요 기능
 
-이 저장소는 **OpenClaw AgentSkill 리포지토리**입니다. 설치/연결 경로는 기존 이름 `openclaw-korea-domestic-flights` 를 유지합니다.
+- 단일 노선 검색: 국내선/국제선, 편도/왕복, 좌석등급, 성인 수
+- 날짜 범위 검색: 기본 최대 45일, `--max-days`로 조정
+- 목적지+날짜 매트릭스: 기본 최대 120조합, `--max-combos`로 조정
+- 하이브리드 전략 엔진: `broad_scan -> candidate_scoring -> detailed_refine -> diagnostic_fallback -> final_ranking`
+- 시간 조건: `저녁`, `출발 10시 이후`, `복귀 18시 이후`, `늦은 시간 선호`
+- 안정 JSON 계약: `status`, `query`, `summary`, `results`, `strategy_metadata`, `diagnostics`, `logs`
+- 가격 감시 저장소: 목표가, dedupe, custom message template, 다중 목적지/날짜 범위 지원
+- 패키징: wheel/sdist와 `korea-flights` console script
+- 배포 계약: PyInstaller `.spec` 파일 없이 `pyproject.toml` 기반 Python 패키지로 검증
 
-일반적으로는 아래처럼 구분해 이해하면 된다.
+## 설치
 
-- 실제 GitHub 저장소: `twbeatles/korea-domestic-flights-skill`
-- OpenClaw 설치/연결 시 유지되는 legacy 식별자: `openclaw-korea-domestic-flights`
-- 스킬 엔트리: `SKILL.md`
-- 사람이 바로 이해할 이름: **OpenClaw Skill: Korea Flights**
+개발 모드:
 
-- 김포-제주, 부산-제주 같은 **국내선 단일 노선 검색**
-- 인천-나리타, 인천-간사이 같은 **국제선 단일 노선 검색**
-- **왕복 검색** 및 시간대 조건 반영
-- **날짜 범위 최저가 탐색**
-- **다중 목적지 비교**
-- **다중 목적지 + 날짜 범위 최적 조합 탐색**
-- **가격 캘린더/히트맵 요약**
-- **목표가 기반 가격 감시 규칙 저장/점검**
-
----
-
-## 핵심 기능
-
-### 1. 단일 노선 검색
-- 편도/왕복 검색
-- 한글 공항명/도시명 입력 지원 (`김포`, `제주`, `인천`, `나리타`, `도쿄`, `오사카` 등)
-- 3자리 공항/도시 코드 pass-through 지원 (`GMP`, `ICN`, `NRT`, `TYO`, `KIX`, `LAX` 등)
-- `--scope auto|domestic|international` 지원
-- 시간대 조건 반영 (`출발 10시 이후`, `복귀 18시 이후` 등)
-- 추천 사유 설명 출력
-
-### 2. 날짜 범위 최저가 탐색
-- `내일부터 3일`, `이번주말`, `다음주말`, `2026-03-25~2026-03-30` 같은 자연어/명시 범위 입력 지원
-- 날짜별 가격 캘린더 제공
-- 왕복 검색 시 균형 추천 제공
-- 시간 조건이 있을 때는 빠른 전체 스캔 후 저가 후보 + 인접 날짜 + 범위 커버리지 앵커를 함께 상세 재검증하는 하이브리드 최적화 적용
-- 시간 조건 하이브리드에서 상세 재검증 결과가 너무 적거나 시간조건 탈락/빈결과 유사 패턴이 강하면 fallback 후보 확장을 한 번 더 수행해 false no-result / false-best 위험을 줄임
-
-### 3. 다중 목적지 비교
-- 예: 김포 출발로 제주/부산/여수 중 어디가 가장 유리한지 비교
-- 예: 인천 출발로 나리타/간사이/후쿠오카 중 어디가 가장 유리한지 비교
-- 목적지별 최저가/추천/가격 차이 설명 제공
-
-### 4. 목적지 + 날짜 범위 매트릭스 탐색
-- 여러 목적지와 여러 날짜 조합을 한 번에 비교
-- 최적 조합 + 목적지별 가격 캘린더 제공
-
-### 5. 가격 감시 / 알림
-- 목표가 이하로 내려오면 알림 메시지 생성
-- 단일 목적지 / 다중 목적지 / 날짜 범위 감시 지원
-- 시간대 조건 포함 규칙 저장 가능
-- dedupe(중복 억제) 지원
-
----
-
-## 빠른 예시
-
-### 단일 검색
 ```bash
-python scripts/search_flights.py --origin 김포 --destination 제주 --departure 내일 --human
+python -m pip install -e .[dev]
 ```
 
-### 국제선 단일 검색
+빌드 산출물 설치:
+
 ```bash
-python scripts/search_flights.py --origin ICN --destination NRT --departure 내일 --scope international --human
+python -m build
+python -m pip install dist/korea_flights-0.1.0-py3-none-any.whl
 ```
 
-### 도시 코드 검색
+참조 저장소는 아래 순서로 탐색합니다.
+
+1. `--repo-path`
+2. `KDF_SOURCE_REPO`
+3. `SCRAPING_FLIGHT_INFORMATION_REPO`
+4. 현재 작업 폴더/상위 폴더의 `tmp/Scraping-flight-information`
+5. 현재 작업 폴더/상위 폴더의 `Scraping-flight-information`
+
+## CLI 사용
+
+상태 점검:
+
 ```bash
-python scripts/search_flights.py --origin SEL --destination TYO --departure 내일 --human
+korea-flights doctor --repo-path D:\twbeatles-repos\Scraping-flight-information
 ```
 
-### 날짜 범위 검색
+단일 검색:
+
 ```bash
-python scripts/search_date_range.py --origin ICN --destination KIX --date-range "내일부터 3일" --scope international --human
+korea-flights search --origin 김포 --destination 제주 --departure 내일 --human
+korea-flights search --origin ICN --destination NRT --departure 내일 --scope international --json
 ```
 
-### 다중 목적지 + 날짜 범위 검색
+날짜 범위 검색:
+
 ```bash
-python scripts/search_destination_date_matrix.py --origin ICN --destinations NRT,KIX,FUK --date-range "다음주말" --return-offset 2 --scope international --human
+korea-flights range --origin ICN --destination KIX --date-range "다음주말" --scope international --human
+korea-flights range --origin 김포 --destination 제주 --start-date 2026-06-01 --end-date 2026-06-15 --time-pref "복귀 18시 이후" --return-offset 2 --refine-budget 10 --fallback-budget 6 --json
 ```
 
-### 시간 조건 포함 가격 감시 규칙 저장
+목적지+날짜 매트릭스:
+
 ```bash
-python scripts/price_alerts.py add --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --target-price 150000 --time-pref "복귀 18시 이후, 늦은 시간 선호" --label "주말 늦복 왕복 감시"
+korea-flights matrix --origin ICN --destinations NRT,KIX,FUK --date-range "내일부터 7일" --scope international --human
+korea-flights matrix --origin 김포 --destinations 제주,부산,여수 --start-date 2026-06-01 --end-date 2026-06-10 --max-combos 120 --json
 ```
 
----
-
-## 출력 특징
-
-이 스킬은 단순 최저가만 보여주지 않고, 가능하면 아래 정보도 같이 제공합니다.
-
-- 추천 사유
-- 시간대 추천
-- 왕복 균형 추천
-- 날짜별 가격 캘린더
-- 목적지별 가격 캘린더
-- 국내선일 때 upstream 혜택가(`benefit_price`, `benefit_label`) 보존
-- upstream 결과의 `duration`, `return_duration`, `stops`, `return_stops`, `flight_number`, `source`, `extraction_source`, `confidence` 보존
-- 모든 JSON 출력에 `query.scope`, `summary.route_scope` 포함
-- `query.scope` 는 사용자가 요청한 scope(`auto|domestic|international`)이고, `summary.route_scope` 는 실제 노선 조합으로 추론된 값이다.
-- 사람용 출력에서는 `최저가`, `시간대 추천`, `왕복 균형 추천` 같은 구획을 나눠 더 읽기 쉽게 표시
-- 사람용 출력에서는 너무 길어지지 않도록 캘린더를 일부만 미리 보여주고 나머지 일수는 축약 표시
-- 시간 조건 하이브리드 검색에서는 추천/상위 결과를 **상세 검증 + 시간 조건 통과 결과만** 기준으로 잡고, 빠른 스캔 후보는 참고용으로만 분리 표시
-
-예를 들어:
-- **추천:** 이번 조건에서는 부산(PUS) 조합이 가장 유리합니다.
-- **추천 사유:** 2위보다 더 저렴하고, 시간 조건에도 맞습니다.
-- **왕복 균형 추천:** 아주 약간 더 비싸더라도 시간대가 더 무난한 조합을 별도로 제안할 수 있습니다.
-
----
-
-## 의존성
-
-이 스킬은 다음 로컬 소스 저장소를 감쌉니다.
-
-- `tmp/Scraping-flight-information`
-
-upstream 저장소 위치는 다음 순서로 찾습니다.
-
-- `--repo-path`
-- `KDF_SOURCE_REPO`
-- 현재 저장소/상위 폴더의 `tmp/Scraping-flight-information`
-- 현재 저장소/상위 폴더의 `Scraping-flight-information`
-
-필요 조건:
-- Playwright/브라우저 실행 가능 환경
-- upstream 검색 로직이 정상 동작할 것
-
-환경이 깨졌거나 사이트 DOM이 바뀌면 결과가 없거나 오류가 날 수 있습니다.
-
----
-
-## 현재 확인된 동작 상태
-
-2026-04-10 점검 기준:
-- 모든 주요 스크립트 `py_compile` 통과
-- `price_alerts.py add/list/remove` 동작 확인
-- `search_flights.py` 추가 및 legacy `search_domestic.py` 호환 유지
-- 국제선 alias / raw IATA pass-through / route scope 회귀 확인
-- `chat_search.py`를 통한 다중 목적지+날짜 범위 JSON 검색 동작 확인
-- `chat_search.py`에서 국제선 단일/다중 목적지 라우팅 및 `--scope` 전달 확인
-- `chat_search.py`에서 다중 목적지 + 명시적 출발일 + `--return-offset` 조합이 날짜 매트릭스로, 단일 목적지 + 동일 조합이 1일 범위 검색으로 올바르게 라우팅되도록 보정
-- 다중 목적지+날짜 범위 검색에서 목적지별 `price_calendar` 출력 확인
-- `references/hybrid-smoke-fixtures.json` 기반 회귀/스모크 진단 케이스 확인
-- `scripts/regression_smoke_check.py` 로 경로 탐색/KST/알림 dedupe/return-offset 보정/scope 마이그레이션 회귀 확인
-- `hybrid_live_dry_run.py`로 환경 전용 또는 얕은 live probe 점검 가능
-
-추가 참고:
-- `references/domestic-airports.md`: 국내 공항/도시 코드와 한글 별칭
-- `references/international-airports.md`: 주요 국제 공항/도시 코드, `SEL-TYO` 같은 도시 코드 예시
-- `references/price-alerts-schema.md`: 가격 감시 저장 포맷과 v2→v3 마이그레이션 규칙
-
----
-
-## 한계 / 주의점
-
-- 국제선 지원은 현재 **검색/비교/날짜 범위/감시 흐름 중심**이며, 모든 국가/항공사/운임 규칙을 완전하게 보장하지는 않습니다.
-- 특히 국제선은 upstream 사이트 구조, 노선별 공급 데이터, 브라우저 환경에 따라 결과 편차가 국내선보다 클 수 있습니다.
-- `scope=auto` 는 편하지만, 국제선으로 명확한 질의라면 `--scope international` 을 명시하는 편이 더 안정적입니다.
-- 도시 코드(`TYO`, `SEL`)와 공항 코드(`NRT`, `ICN`)가 섞이면 의도와 다른 범위가 잡힐 수 있어, 운영 자동화에서는 가능한 한 명시적 코드 사용을 권장합니다.
-- 실제 검색은 외부 사이트 상태와 브라우저 환경에 영향을 받습니다.
-- 날짜 범위/다중 목적지/왕복 검색은 실행 시간이 길 수 있지만, 시간 조건이 있는 범위/매트릭스 검색은 하이브리드 최적화로 전체 조합을 먼저 빠르게 훑은 뒤 저가 후보·인접 날짜·커버리지 앵커를 함께 상세 검색합니다.
-- 상세 재검증 후 시간 조건 일치 결과가 너무 적으면 fallback 후보 확장을 추가로 수행할 수 있습니다.
-- JSON `summary.search_metadata` / 최상위 `search_metadata` 와 `logs` 에 하이브리드 사용 여부, 초기/추가 재검증 수, fallback 여부, 시간 조건 요약과 `refine_diagnostics`(시간조건 탈락 / usable match 없음 / 빠른스캔-상세 불일치 빈결과 / 시간·가격 정보 완전누락/부분누락 분류, 샘플, `human_hint`/`developer_hint`, `extraction_summary`, `ranked_reasons`, `dominant_reason_code`, `primary_interpretation`)가 기록됩니다.
-- fallback 판단은 `fallback_decision` / `fallback_reason_codes` 로 구조화되어 남아 extraction incompleteness 우세인지 genuine time-filter rejection 우세인지 구분하기 쉽게 했습니다.
-- 사람용 출력에서는 필요할 때만 한 줄짜리 `참고:` 진단 힌트를 덧붙이고, 더 자세한 디버그성 힌트와 커버리지 수치는 JSON 메타데이터에만 남겨서 사람용 출력이 시끄러워지지 않게 유지합니다.
-- Windows 환경에서 `price_alerts.py check` 는 UTF-8 서브프로세스 모드로 검색 스크립트를 실행합니다.
-
-## 운영용 smoke check 루틴
-
-배포 전에는 최소 아래 순서로 점검하는 것을 권장합니다.
+가격 알림:
 
 ```bash
-python scripts/search_flights.py --origin GMP --destination CJU --departure 내일 --human
-python scripts/search_flights.py --origin ICN --destination NRT --departure 내일 --scope international --human
-python scripts/search_date_range.py --origin ICN --destination KIX --date-range "다음주말" --scope international --human
-python scripts/price_alerts.py list --json
+korea-flights alert add --origin 김포 --destination 제주 --date-range "다음주말" --return-offset 2 --target-price 150000 --time-pref "복귀 18시 이후"
+korea-flights alert list
+korea-flights alert check --no-dedupe
+```
+
+얕은 live smoke:
+
+```bash
+korea-flights live-smoke --repo-path D:\twbeatles-repos\Scraping-flight-information --json
+```
+
+`live-smoke`는 가격 자체를 고정 검증하지 않고 국내선/국제선 검색이 비정상 종료되지 않는지와 결과 source 신호를 확인합니다.
+
+## 전략 엔진
+
+`HybridStrategyEngine`은 날짜 범위와 매트릭스 검색에서 같은 파이프라인을 사용합니다.
+
+1. `broad_scan`: upstream `ParallelSearcher`로 전체 후보를 빠르게 훑습니다.
+2. `candidate_scoring`: 가격 순위, 목적지별 커버리지, 범위 앵커, 저가 후보 인접일, 시간조건 필요성, confidence를 점수화합니다.
+3. `detailed_refine`: 상위 후보를 upstream `FlightSearcher`로 상세 검증합니다.
+4. `diagnostic_fallback`: 추출 불완전, 시간 조건 탈락, broad/detail 불일치가 강하면 후보를 추가 검증합니다.
+5. `final_ranking`: 시간 조건이 있으면 상세 검증과 시간 조건을 통과한 결과만 추천에 반영합니다.
+
+상세 결과는 upstream 필드를 최대한 보존합니다.
+
+- `duration`, `return_duration`
+- `stops`, `return_stops`
+- `flight_number`
+- `benefit_price`, `benefit_label`
+- `source`, `extraction_source`, `confidence`
+
+## Legacy 스크립트
+
+기존 `scripts/search_flights.py`, `scripts/search_date_range.py`, `scripts/search_destination_date_matrix.py`, `scripts/search_multi_destination.py`, `scripts/chat_search.py`, `scripts/price_alerts.py`는 남아 있지만, 구현은 새 `korea_flights` 패키지 CLI로 넘기는 forwarder입니다. 새 문서와 자동화는 `korea-flights` 명령을 기준으로 작성하세요.
+
+## 검증
+
+권장 로컬 게이트:
+
+```bash
+python -m compileall src scripts tests
+python -m pytest -q
 python scripts/regression_smoke_check.py
+python scripts/hybrid_smoke_check.py
+python -m build
 ```
 
-권장 확인 포인트:
-- 국내선 1건, 국제선 1건이 모두 정상 라우팅되는지
-- `query.scope` 와 `summary.route_scope` 가 기대대로 찍히는지
-- 시간 조건/날짜 범위 쿼리에서 fallback 메타가 과도하게 발생하지 않는지
-- alert state 파일이 로컬 상태만 갱신하고 git diff를 더럽히지 않는지
+이 저장소에는 `.spec` 파일이 없으며, GUI/EXE 패키징 대신 wheel/sdist 빌드와 설치 후 CLI smoke를 기준으로 검증한다. wheel에는 `SKILL.md`와 `references/*.md`가 package data로 포함된다.
 
-자세한 사용법은 `SKILL.md`를 참고하세요.
+패키지 설치 smoke:
+
+```bash
+python -m venv .tmp-wheel-smoke
+.tmp-wheel-smoke\Scripts\python -m pip install --no-deps dist\korea_flights-0.1.0-py3-none-any.whl
+.tmp-wheel-smoke\Scripts\korea-flights --help
+.tmp-wheel-smoke\Scripts\korea-flights doctor --repo-path D:\twbeatles-repos\Scraping-flight-information
+```
+
+## 주의
+
+- 실제 검색은 외부 사이트와 Playwright/브라우저 환경에 영향을 받습니다.
+- 참조 저장소의 Interpark API-first 동작이 깨지면 이 패키지의 adapter도 영향을 받습니다.
+- 과도한 반복 검색은 차단이나 지연을 유발할 수 있습니다.

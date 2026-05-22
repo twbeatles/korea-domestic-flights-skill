@@ -27,7 +27,17 @@ if ($SourceRepoPath -and $SourceRepoPath.Trim().Length -gt 0) {
   $repoArg = " --repo-path `"$SourceRepoPath`""
 }
 
-$psCommand = "Set-Location -LiteralPath `"$workingDir`"; & `"$PythonExe`" -X utf8 `"$scriptPath`"$storeArg$repoArg check"
+$srcPath = Join-Path $RepoRoot "src"
+$packagePath = Join-Path $srcPath "korea_flights"
+if (Test-Path $packagePath) {
+  $workingDir = $RepoRoot
+  $pythonPathPrefix = "`$env:PYTHONPATH = `"$srcPath;`$env:PYTHONPATH`"; "
+  $psCommand = "Set-Location -LiteralPath `"$workingDir`"; $pythonPathPrefix& `"$PythonExe`" -X utf8 -m korea_flights.cli alert$storeArg$repoArg check"
+  $displayCommand = "$PythonExe -X utf8 -m korea_flights.cli alert$storeArg$repoArg check"
+} else {
+  $psCommand = "Set-Location -LiteralPath `"$workingDir`"; & `"$PythonExe`" -X utf8 `"$scriptPath`"$storeArg$repoArg check"
+  $displayCommand = "$PythonExe -X utf8 $scriptPath$storeArg$repoArg check"
+}
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -Command $psCommand"
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1)
 $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) -RepetitionDuration ([TimeSpan]::MaxValue)).Repetition
@@ -35,4 +45,4 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 Write-Host "등록 완료: $TaskName"
-Write-Host "실행 명령: $PythonExe -X utf8 $scriptPath$storeArg$repoArg check"
+Write-Host "실행 명령: $displayCommand"

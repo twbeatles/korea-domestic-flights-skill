@@ -1,6 +1,6 @@
 # 항공권 가격 감시 JSON 포맷
 
-이 스킬의 가격 감시 기능은 기본적으로 스킬 루트의 `price-alert-rules.json` 파일을 사용한다.
+이 스킬의 가격 감시 기능은 기본적으로 스킬 루트의 `price-alert-rules.json` 파일을 사용한다. 주 인터페이스는 `korea-flights alert` 이며, 기존 `scripts/price_alerts.py`는 호환용 forwarder로만 유지된다.
 
 OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
 
@@ -10,19 +10,19 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
 - 마지막 점검 시각(`last_checked_at`)과 마지막 결과(`last_result`)를 함께 저장한다.
 - **동일 최저가/동일 항공편 조건의 재알림 방지**를 위해 `notify.dedupe_key` 를 저장한다.
 - **알림 문구 커스터마이즈**를 위해 `notify.message_template` 를 저장한다.
-- 점검 스크립트는 목표가 충족 시 한국어 알림 메시지를 stdout 으로 출력하므로 cron/briefing 파이프에 바로 연결하기 쉽다.
+- `korea-flights alert check` 는 목표가 충족 시 한국어 알림 메시지를 stdout 으로 출력하므로 cron/briefing 파이프에 바로 연결하기 쉽다.
 - 향후 알림 채널 확장이 가능하도록 `notify` 필드를 남겨 둔다.
 
 ## 스키마 개요
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "timezone": "Asia/Seoul",
   "updated_at": "2026-03-19T18:40:00+09:00",
   "rules": [
     {
-      "id": "kdf-a1b2c3d4",
+      "id": "kf-a1b2c3d4",
       "enabled": true,
       "label": "김포→제주,부산 주말 특가 감시",
       "fingerprint": "{...canonical json...}",
@@ -38,6 +38,7 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
         },
         "return_offset": 0,
         "scope": "domestic",
+        "time_preference": "아침 비행 우선",
         "adults": 1,
         "cabin": "ECONOMY",
         "trip_type": "one_way",
@@ -56,7 +57,10 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
           "price": 81200,
           "airline": "제주항공"
         },
-        "search_type": "destination_date_matrix"
+        "search_type": "matrix",
+        "raw_summary": {
+          "pipeline": "broad_scan -> candidate_scoring -> detailed_refine -> diagnostic_fallback -> final_ranking"
+        }
       },
       "notify": {
         "channel": "stdout",
@@ -65,7 +69,7 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
         "message_template": "[특가] {label} {best_destination_label} {observed_price}"
       },
       "meta": {
-        "source": "price_alerts.py",
+        "source": "korea_flights.alerts",
         "notes": "아침 비행 우선"
       }
     }
@@ -90,10 +94,11 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
 - `rules[].query.date_range`: 날짜 범위 감시용
 - `rules[].query.return_offset`: 날짜 범위 왕복 감시에서 귀국일 오프셋
 - `rules[].query.scope`: `auto|domestic|international`
+- `rules[].query.time_preference`: `저녁`, `출발 10시 이후`, `복귀 18시 이후` 같은 시간 조건
 - `rules[].query.source_repo_path`: 필요할 때 upstream 저장소를 명시적으로 지정하는 절대 경로
 - `rules[].query.adults`, `cabin`: 검색 조건
 - `rules[].target_price_krw`: 목표가
-- `rules[].last_result`: 마지막 점검 결과 캐시. 실제로는 호출된 검색 스크립트의 원본 JSON 이 저장되므로 `query.scope`, `summary.route_scope`, `results[]` 와 함께 `duration`, `stops`, `flight_number`, `benefit_price`, `benefit_label`, `source`, `extraction_source`, `confidence` 같은 결과 필드도 포함될 수 있다.
+- `rules[].last_result`: 마지막 점검 결과 캐시. `search_type`, `raw_summary`, 관측 최저가, 최적 후보가 저장된다. 검색 원본 JSON 계약은 `status`, `query`, `summary`, `results`, `strategy_metadata`, `diagnostics`, `logs` 이며, 결과에는 `duration`, `stops`, `flight_number`, `benefit_price`, `benefit_label`, `source`, `extraction_source`, `confidence` 같은 upstream 필드가 보존될 수 있다.
 - `rules[].notify.channel`: 현재는 `stdout` 고정, 향후 확장 대비
 - `rules[].notify.dedupe_key`: 최근 발송된 알림 fingerprint
 - `rules[].notify.last_sent_at`: 마지막 알림 발송 시각
@@ -102,21 +107,23 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
 
 ## 다중 목적지 감시 동작
 
-- `destinations` 가 2개 이상이면 `price_alerts.py check` 가 자동으로 다중 목적지 검색 스크립트를 사용한다.
-- 단일 날짜 감시는 `search_multi_destination.py`
-- 날짜 범위 감시는 `search_destination_date_matrix.py`
+- `destinations` 가 2개 이상이면 `korea-flights alert check` 가 `HybridStrategyEngine`의 매트릭스 탐색을 사용한다.
+- 단일 날짜/단일 목적지는 `search_type: single`
+- 날짜 범위/단일 목적지는 `search_type: date_range`
+- 다중 목적지 또는 목적지+날짜 조합은 `search_type: matrix`
 - 알림은 **가장 저렴한 목적지/날짜 조합 1건** 기준으로 발생한다.
 
-## 버전 2 마이그레이션
+## 버전 마이그레이션
 
-- 기존 `version: 2` 규칙 파일은 로드 시 `version: 3` 으로 해석된다.
+- 기존 `version: 2` 또는 `version: 3` 규칙 파일은 로드 시 `version: 4` 로 해석된다.
 - `query.scope` 가 없으면 저장된 origin/destination 조합으로 domestic/international 을 추론한다.
+- `id` 접두사는 새 규칙부터 `kf-` 를 사용하지만, 기존 `kdf-` ID도 그대로 읽는다.
 - dedupe 키 계산 방식은 유지하므로, 기존 알림 억제 동작은 그대로 이어진다.
 
 ## 단일 날짜 + return-offset 동작
 
 - `add --departure 2026-03-25 --return-offset 2` 처럼 입력하면 내부적으로 `2026-03-25~2026-03-25` 1일 범위 감시로 저장한다.
-- 즉, 단일 날짜 왕복 오프셋 감시도 `search_date_range.py` 기반으로 일관되게 점검된다.
+- 즉, 단일 날짜 왕복 오프셋 감시도 패키지의 `range` 경로와 같은 날짜 범위 엔진으로 일관되게 점검된다.
 - `--return-date` 와 `--return-offset` 은 함께 저장할 수 없다.
 
 ## 중복 방지 동작
@@ -140,7 +147,7 @@ OpenClaw cron/브리핑과 연결하기 쉽게 다음 원칙으로 설계한다.
 강제로 다시 출력하려면:
 
 ```bash
-python scripts/price_alerts.py check --no-dedupe
+korea-flights alert check --no-dedupe
 ```
 
 ## 메시지 템플릿 변수
@@ -169,7 +176,7 @@ python scripts/price_alerts.py check --no-dedupe
 예시:
 
 ```bash
-python scripts/price_alerts.py add \
+korea-flights alert add \
   --origin 김포 \
   --destinations 제주,부산 \
   --date-range "내일부터 3일" \
@@ -182,7 +189,7 @@ python scripts/price_alerts.py add \
 정기 점검에서 다음처럼 실행하면 된다.
 
 ```bash
-python scripts/price_alerts.py check
+korea-flights alert check
 ```
 
 동작 방식:
@@ -204,4 +211,5 @@ powershell -ExecutionPolicy Bypass -File scripts/register_price_alerts_task.ps1 
 주의:
 - 이 스크립트는 **작업 등록만** 돕는다.
 - standalone 저장소와 skill-layout 둘 다 찾도록 작성되어 있지만, upstream 저장소 위치가 표준 경로가 아니면 `-SourceRepoPath` 또는 `--repo-path` 를 함께 지정하는 편이 안전하다.
+- 스케줄러가 실행하는 실제 검색 진입점은 `korea-flights alert check` 이며, legacy script 경로는 호환 목적이다.
 - 실제 알림 전송은 상위 OpenClaw cron/브리핑 파이프가 stdout 을 받아 전달하는 방식으로 연결해야 한다.

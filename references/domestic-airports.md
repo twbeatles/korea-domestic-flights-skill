@@ -49,7 +49,9 @@
 - 김포 제주 왕복 2박 기준 날짜별 최저가 찾아줘
 - 김포 출발로 제주, 부산, 여수 중 어디가 제일 싼지 비교해줘
 
-## 코드 기반 예시
+## CLI 예시
 
-- `python scripts/search_flights.py --origin GMP --destination CJU --departure 내일 --human`
-- `python scripts/search_flights.py --origin SEL --destination CJU --departure 내일 --human`
+- `korea-flights search --origin GMP --destination CJU --departure 내일 --human`
+- `korea-flights search --origin SEL --destination CJU --departure 내일 --human`
+
+기존 `scripts/search_flights.py`는 호환용 forwarder로만 유지된다. 새 자동화와 문서는 `korea-flights` 패키지 CLI를 기준으로 작성한다.
